@@ -27,6 +27,8 @@ struct AOLConfig: Codable {
     var keywords = AOLConfig.defaultKeywords
     var neverSaveHosts: [String] = []
     var radioPresets: [RadioStation] = []
+    var screenNames: [String] = []
+    var signOnLocation = "Home (Broadband)"
 
     init() {}
 
@@ -41,6 +43,8 @@ struct AOLConfig: Codable {
         keywords = try c.decodeIfPresent([String: String].self, forKey: .keywords) ?? d.keywords
         neverSaveHosts = try c.decodeIfPresent([String].self, forKey: .neverSaveHosts) ?? d.neverSaveHosts
         radioPresets = try c.decodeIfPresent([RadioStation].self, forKey: .radioPresets) ?? d.radioPresets
+        screenNames = try c.decodeIfPresent([String].self, forKey: .screenNames) ?? d.screenNames
+        signOnLocation = try c.decodeIfPresent(String.self, forKey: .signOnLocation) ?? d.signOnLocation
     }
 
     func service(_ id: String) -> ServiceDef? { services.first { $0.id == id } }

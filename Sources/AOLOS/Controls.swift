@@ -46,48 +46,46 @@ final class CaptionButton: PressableView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Classic beveled grey box with a black glyph, as on the AOL 9 title bars.
     override func draw(_ dirtyRect: NSRect) {
         let r = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3)
-        var colors = kind == .close
-            ? [Theme.rgb(236, 128, 96), Theme.rgb(204, 60, 28)]
-            : [Theme.rgb(96, 156, 252), Theme.rgb(28, 88, 222)]
-        if isPressed {
-            colors = colors.map { $0.blended(withFraction: 0.25, of: .black) ?? $0 }
-        } else if isHovered {
-            colors = colors.map { $0.blended(withFraction: 0.2, of: .white) ?? $0 }
-        }
-        Theme.gradient(colors, in: path)
-        NSColor.white.withAlphaComponent(0.9).setStroke()
-        path.lineWidth = 1
-        path.stroke()
+        (isPressed ? Theme.rgb(200, 198, 192) : (isHovered ? Theme.rgb(236, 234, 228) : Theme.rgb(214, 211, 204))).setFill()
+        r.fill()
+        let light = NSColor.white, dark = Theme.rgb(64, 64, 64)
+        (isPressed ? dark : light).setFill()
+        NSRect(x: r.minX, y: r.minY, width: r.width, height: 1).fill()
+        NSRect(x: r.minX, y: r.minY, width: 1, height: r.height).fill()
+        (isPressed ? light : dark).setFill()
+        NSRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1).fill()
+        NSRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height).fill()
 
-        NSColor.white.set()
+        NSColor.black.set()
         let w = bounds.width, h = bounds.height
+        let o: CGFloat = isPressed ? 1 : 0
         switch kind {
         case .minimize:
-            NSRect(x: w * 0.25, y: h * 0.66, width: w * 0.38, height: 2.5).fill()
+            NSRect(x: w * 0.27 + o, y: h * 0.64 + o, width: w * 0.4, height: 2).fill()
         case .maximize:
-            let box = NSRect(x: w * 0.24, y: h * 0.24, width: w * 0.52, height: h * 0.5)
+            let box = NSRect(x: w * 0.25 + o, y: h * 0.25 + o, width: w * 0.5, height: h * 0.46)
             NSBezierPath(rect: box).stroke()
-            NSRect(x: box.minX, y: box.minY, width: box.width, height: 2.5).fill()
+            NSRect(x: box.minX, y: box.minY, width: box.width, height: 2).fill()
         case .restore:
-            let back = NSRect(x: w * 0.36, y: h * 0.2, width: w * 0.4, height: h * 0.36)
-            let front = NSRect(x: w * 0.22, y: h * 0.4, width: w * 0.4, height: h * 0.36)
+            let back = NSRect(x: w * 0.38 + o, y: h * 0.22 + o, width: w * 0.36, height: h * 0.32)
+            let front = NSRect(x: w * 0.24 + o, y: h * 0.42 + o, width: w * 0.36, height: h * 0.32)
             NSBezierPath(rect: back).stroke()
             NSRect(x: back.minX, y: back.minY, width: back.width, height: 2).fill()
-            Theme.rgb(28, 88, 222).setFill()
+            Theme.rgb(214, 211, 204).setFill()
             front.fill()
-            NSColor.white.set()
+            NSColor.black.set()
             NSBezierPath(rect: front).stroke()
             NSRect(x: front.minX, y: front.minY, width: front.width, height: 2).fill()
         case .close:
             let x = NSBezierPath()
-            x.lineWidth = 2
-            x.move(to: NSPoint(x: w * 0.3, y: h * 0.3))
-            x.line(to: NSPoint(x: w * 0.7, y: h * 0.7))
-            x.move(to: NSPoint(x: w * 0.7, y: h * 0.3))
-            x.line(to: NSPoint(x: w * 0.3, y: h * 0.7))
+            x.lineWidth = 1.8
+            x.move(to: NSPoint(x: w * 0.3 + o, y: h * 0.3 + o))
+            x.line(to: NSPoint(x: w * 0.7 + o, y: h * 0.7 + o))
+            x.move(to: NSPoint(x: w * 0.7 + o, y: h * 0.3 + o))
+            x.line(to: NSPoint(x: w * 0.3 + o, y: h * 0.7 + o))
             x.stroke()
         }
     }

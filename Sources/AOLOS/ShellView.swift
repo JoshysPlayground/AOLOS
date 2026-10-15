@@ -51,7 +51,7 @@ final class MenuRow: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.chrome.setFill()
+        Theme.menuBar.setFill()
         bounds.fill()
     }
 }
@@ -80,10 +80,10 @@ final class ToolbarView: FlippedView {
         if let last = leftItems.last {
             let groupRect = NSRect(x: 3, y: 2, width: last.frame.maxX - 1, height: bounds.height - 4)
             let path = NSBezierPath(roundedRect: groupRect, xRadius: 6, yRadius: 6)
-            Theme.chromeShade.withAlphaComponent(0.5).setStroke()
+            Theme.toolbarLine.withAlphaComponent(0.6).setStroke()
             path.stroke()
         }
-        Theme.chromeShade.setFill()
+        Theme.toolbarLine.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 }
@@ -120,9 +120,8 @@ final class NavBar: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.chrome.setFill()
-        bounds.fill()
-        Theme.chromeShade.setFill()
+        Theme.gradient(Theme.navBar, in: bounds)
+        Theme.toolbarLine.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 }

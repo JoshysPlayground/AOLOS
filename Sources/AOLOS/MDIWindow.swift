@@ -170,8 +170,12 @@ final class MDIWindow: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (isActive ? Theme.frameActive : Theme.frameInactive).setFill()
+        Theme.rgb(212, 208, 200).setFill()
         bounds.fill()
+        Theme.rgb(64, 64, 64).setStroke()
+        NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        NSColor.white.setStroke()
+        NSBezierPath(rect: bounds.insetBy(dx: 1.5, dy: 1.5)).stroke()
     }
 
     private func updateTitleState() {

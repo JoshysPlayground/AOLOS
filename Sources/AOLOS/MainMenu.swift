@@ -119,8 +119,12 @@ enum MainMenu {
             item("Keyword") { [weak session] m in
                 m.addItem(ActionItem("Go to Keyword...") { session?.promptKeyword() })
             },
-            item("Sign Off") { [weak session] m in
-                m.addItem(ActionItem("Sign Off") { session?.signOff() })
+            item(session.signedOn ? "Sign Off" : "Sign On") { [weak session] m in
+                if session?.signedOn == true {
+                    m.addItem(ActionItem("Sign Off") { session?.signOff() })
+                } else {
+                    m.addItem(withTitle: "Use the Sign On window to sign on", action: nil, keyEquivalent: "").isEnabled = false
+                }
                 m.addItem(ActionItem("Exit AOL-OS") { session?.quit() })
             },
             item("Help") { m in

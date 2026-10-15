@@ -5,16 +5,19 @@ enum Theme {
         NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: a)
     }
 
-    static let titleActive = [rgb(9, 97, 237), rgb(0, 72, 214), rgb(0, 61, 196)]
-    static let titleInactive = [rgb(140, 166, 229), rgb(118, 143, 214)]
+    static let titleActive = [rgb(18, 36, 132), rgb(12, 28, 112)]
+    static let titleInactive = [rgb(128, 140, 170), rgb(112, 124, 156)]
     static let titleAttention = [rgb(255, 178, 66), rgb(232, 122, 18)]
-    static let frameActive = rgb(0, 60, 190)
-    static let frameInactive = rgb(122, 150, 223)
+    static let frameActive = rgb(10, 26, 104)
+    static let frameInactive = rgb(120, 132, 162)
 
     static let chrome = rgb(236, 233, 216)
     static let chromeShade = rgb(172, 168, 153)
-    static let toolbar = [rgb(252, 251, 247), rgb(229, 225, 210)]
-    static let desktop = [rgb(118, 152, 196), rgb(186, 205, 228)]
+    static let menuBar = rgb(250, 251, 253)
+    static let toolbar = [rgb(255, 255, 255), rgb(222, 234, 248)]
+    static let navBar = [rgb(226, 237, 250), rgb(198, 218, 242)]
+    static let toolbarLine = rgb(150, 176, 214)
+    static let desktop = [rgb(110, 146, 196), rgb(180, 202, 230)]
     static let hover = rgb(49, 106, 197)
 
     static let aolBlue = rgb(0, 84, 166)

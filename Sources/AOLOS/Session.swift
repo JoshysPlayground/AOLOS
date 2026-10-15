@@ -11,6 +11,7 @@ final class Session {
 
     private var signOnWindow: MDIWindow?
     private var signOnView: SignOnView?
+    private var macSafetyCache: [SafetyItem] = []
     private var welcomeWindow: MDIWindow?
     var welcomePane: WelcomePane?
     private var settingsWindow: MDIWindow?
@@ -46,24 +47,62 @@ final class Session {
     private func showSignOn() {
         signedOn = false
         shell.setSignedOn(false)
+        shell.menuRow.setItems(MainMenu.rowItems(session: self))
         shell.statusBar.screenName = ""
         shell.statusBar.status = "Ready to sign on"
 
-        let view = SignOnView(screenName: config.screenName, usesTouchID: config.requireTouchID)
-        view.onSignOn = { [weak self] name in self?.signOn(as: name) }
-        let window = MDIWindow(title: "Sign On", icon: Icons.symbol("person.crop.circle.fill", colors: [.white]), content: view)
+        let names = config.screenNames.isEmpty ? [config.screenName] : config.screenNames
+        let view = SignOnView(screenNames: names, selected: config.screenName, location: config.signOnLocation)
+        view.touchIDOn = config.requireTouchID
+        view.soundsOn = config.soundsEnabled
+        view.onSignOn = { [weak self] name, location in self?.signOn(as: name, location: location) }
+        view.onScreenNamesChanged = { [weak self] names in self?.updateConfig { $0.screenNames = names } }
+        view.onToggleTouchID = { [weak self] in
+            self?.updateConfig { $0.requireTouchID.toggle() }
+            self?.refreshSafety()
+        }
+        view.onToggleSounds = { [weak self] in
+            self?.updateConfig { $0.soundsEnabled.toggle() }
+            SoundManager.shared.enabled = self?.config.soundsEnabled ?? true
+        }
+        view.onHelp = {
+            let alert = NSAlert()
+            alert.messageText = "Get Help"
+            alert.informativeText = "Pick a screen name and click Sign On. Sign On asks for Touch ID or your Mac password unless that is turned off under Sign On Options. Dial-Up (56K) takes the long way and plays dialup.wav from the Sounds folder."
+            alert.runModal()
+        }
+        let window = MDIWindow(title: "Sign On", icon: Icons.symbol("triangle.fill", colors: [.white]), content: view)
         window.closable = false
-        window.minimizable = false
         window.resizable = false
         window.focusView = view
-        desktop.add(window, size: NSSize(width: 428, height: 414), centered: true)
+        desktop.add(window, size: NSSize(width: 600, height: 430), centered: true)
         signOnWindow = window
         signOnView = view
+        refreshSafety()
     }
 
-    private func signOn(as name: String) {
-        config.screenName = name
-        ConfigStore.save(config)
+    private func refreshSafety() {
+        let aol = [
+            SafetyItem(label: "Touch ID Sign On", state: config.requireTouchID ? .on : .off),
+            SafetyItem(label: "Mail Image Blocking", state: .on),
+            SafetyItem(label: "Keychain Password Saving", state: .on),
+            SafetyItem(label: "Gmail Connection", state: mail.auth.isConnected ? .on : .unknown),
+        ]
+        signOnView?.setSafety(aol: aol, mac: macSafetyCache)
+        Task { [weak self] in
+            let mac = await MacSafety.check()
+            guard let self else { return }
+            self.macSafetyCache = mac
+            self.signOnView?.setSafety(aol: aol, mac: mac)
+        }
+    }
+
+    private func signOn(as name: String, location: String) {
+        updateConfig {
+            $0.screenName = name
+            $0.signOnLocation = location
+            if !$0.screenNames.contains(name) { $0.screenNames.append(name) }
+        }
         signOnView?.setBusy(true)
         authenticate { [weak self] ok, message in
             guard let self else { return }
@@ -71,7 +110,9 @@ final class Session {
                 self.signOnView?.showError(message ?? "Sign on was cancelled.")
                 return
             }
-            self.signOnView?.runConnectingSequence { [weak self] in self?.completeSignOn() }
+            let dialUp = location.hasPrefix("Dial-Up")
+            if dialUp { SoundManager.shared.play(.dialUp) }
+            self.signOnView?.runConnectingSequence(dialUp: dialUp) { [weak self] in self?.completeSignOn() }
         }
     }
 
@@ -96,6 +137,7 @@ final class Session {
         signOnView = nil
         signedOn = true
         shell.setSignedOn(true)
+        shell.menuRow.setItems(MainMenu.rowItems(session: self))
         shell.statusBar.screenName = config.screenName
         SoundManager.shared.play(.welcome)
         if config.openAtSignOn.contains("mail") { mail.start() }
