@@ -1,0 +1,244 @@
+import Foundation
+
+extension Scripts {
+    /// Reads friends, presence and direct messages out of the Discord web app and posts them over `aolos`.
+    /// Native code calls back into `window.__aolosDiscord`. Discord has no public API for this, so the
+    /// script finds the client's own Flux stores through its webpack chunk array, `webpackChunkdiscord_app`.
+    /// Store and action names come from the running client and can change with any Discord release.
+    static let discordBridge = #"""
+    (() => {
+      if (window.__aolosDiscord || !/(^|\.)discord\.com$/.test(location.hostname)) return;
+      const post = (m) => { try { window.webkit.messageHandlers.aolos.postMessage(m); } catch (e) {} };
+      const S = {};
+      let req = null;
+
+      const webpack = () => {
+        if (req) return req;
+        const chunk = window.webpackChunkdiscord_app;
+        if (!chunk || typeof chunk.push !== 'function') return null;
+        let found = null;
+        try {
+          chunk.push([[Symbol('aolos')], {}, (r) => { found = r; }]);
+          chunk.pop();
+        } catch (e) { return null; }
+        if (found && found.c) req = found;
+        return req;
+      };
+
+      const candidates = function* () {
+        const r = webpack();
+        if (!r) return;
+        for (const id of Object.keys(r.c)) {
+          const e = r.c[id] && r.c[id].exports;
+          if (!e || e === window) continue;
+          yield e;
+          if (typeof e !== 'object') continue;
+          for (const k of Object.keys(e)) {
+            let v;
+            try { v = e[k]; } catch (err) { continue; }
+            if (v && v !== e && (typeof v === 'object' || typeof v === 'function')) yield v;
+          }
+        }
+      };
+
+      const find = (test) => {
+        for (const e of candidates()) {
+          try { if (test(e)) return e; } catch (err) {}
+        }
+        return null;
+      };
+
+      const storeName = (e) => {
+        if (typeof e.getName === 'function') return e.getName();
+        return e.constructor && e.constructor.displayName;
+      };
+      const store = (name) => find((e) => typeof e.addChangeListener === 'function' && storeName(e) === name);
+
+      const wanted = {
+        presence: () => store('PresenceStore'),
+        relationships: () => store('RelationshipStore'),
+        users: () => store('UserStore'),
+        channels: () => store('ChannelStore'),
+        messages: () => store('MessageStore'),
+        dispatcher: () => find((e) => typeof e.dispatch === 'function' && typeof e.subscribe === 'function'
+                                     && typeof e.unsubscribe === 'function'),
+        actions: () => find((e) => typeof e.sendMessage === 'function' && typeof e.editMessage === 'function'),
+        privates: () => find((e) => typeof e.openPrivateChannel === 'function'),
+      };
+      const missing = () => Object.keys(wanted).filter((k) => !S[k]);
+
+      const avatar = (u, id) => {
+        if (u && u.avatar) return `https://cdn.discordapp.com/avatars/${id}/${u.avatar}.png?size=64`;
+        let index = 0;
+        try {
+          index = u && u.discriminator && u.discriminator !== '0'
+            ? Number(u.discriminator) % 5 : Number((BigInt(id) >> 22n) % 6n);
+        } catch (e) {}
+        return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+      };
+
+      const displayName = (id) => {
+        const u = S.users.getUser(id);
+        const nick = typeof S.relationships.getNickname === 'function' ? S.relationships.getNickname(id) : null;
+        return nick || (u && (u.globalName || u.global_name || u.username)) || id;
+      };
+
+      const activity = (id) => {
+        let list = [];
+        try { list = S.presence.getActivities(id) || []; } catch (e) {}
+        const custom = list.find((a) => a.type === 4 && a.state);
+        if (custom) return custom.state;
+        const verbs = { 0: 'Playing', 1: 'Streaming', 2: 'Listening to', 3: 'Watching', 5: 'Competing in' };
+        const a = list.find((x) => x.type in verbs && x.name);
+        return a ? `${verbs[a.type]} ${a.name}` : '';
+      };
+
+      const friendIDs = () => {
+        if (typeof S.relationships.getFriendIDs === 'function') return S.relationships.getFriendIDs();
+        const all = typeof S.relationships.getRelationships === 'function' ? S.relationships.getRelationships() : {};
+        return Object.keys(all).filter((id) => all[id] === 1);
+      };
+
+      const clientStatus = (id) => {
+        try {
+          const state = S.presence.getState();
+          return (state.clientStatuses && state.clientStatuses[id]) || {};
+        } catch (e) { return {}; }
+      };
+
+      const friend = (id) => {
+        const u = S.users.getUser(id);
+        const cs = clientStatus(id);
+        return {
+          id,
+          name: displayName(id),
+          username: (u && u.username) || '',
+          avatar: avatar(u, id),
+          status: S.presence.getStatus(id) || 'offline',
+          desktop: cs.desktop || '', mobile: cs.mobile || '', web: cs.web || '',
+          activity: activity(id),
+        };
+      };
+
+      let last = '';
+      let pending = null;
+      const snapshot = (force) => {
+        const me = S.users.getCurrentUser();
+        if (!me) return;
+        const body = {
+          me: { id: me.id, name: me.globalName || me.global_name || me.username, avatar: avatar(me, me.id) },
+          friends: friendIDs().map(friend),
+        };
+        const json = JSON.stringify(body);
+        if (!force && json === last) return;
+        last = json;
+        post(Object.assign({ type: 'discord.friends' }, body));
+      };
+      const schedule = () => {
+        if (pending) return;
+        pending = setTimeout(() => { pending = null; try { snapshot(false); } catch (e) {} }, 300);
+      };
+
+      const text = (m) => {
+        let s = String(m.content || '');
+        s = s.replace(/<@!?(\d+)>/g, (_, id) => '@' + displayName(id));
+        s = s.replace(/<a?(:\w+:)\d+>/g, '$1');
+        const files = (m.attachments || []).map((a) => a.filename || a.url).filter(Boolean);
+        if (files.length) s += (s ? '\n' : '') + files.map((f) => `[${f}]`).join(' ');
+        if (!s && (m.sticker_items || m.stickerItems || []).length) s = '[sticker]';
+        if (!s && (m.embeds || []).length) s = '[embed]';
+        return s;
+      };
+
+      const message = (m) => {
+        let time = Date.now();
+        try {
+          const t = new Date(m.timestamp && m.timestamp.valueOf ? m.timestamp.valueOf() : m.timestamp).getTime();
+          if (!isNaN(t)) time = t;
+        } catch (e) {}
+        const author = m.author || {};
+        return { id: String(m.id), authorID: String(author.id || ''), text: text(m), time };
+      };
+
+      const recipient = (channel) => {
+        if (!channel || channel.type !== 1) return null;
+        if (typeof channel.getRecipientId === 'function') return channel.getRecipientId();
+        const r = channel.recipients || channel.rawRecipients || [];
+        const first = r[0];
+        return first && typeof first === 'object' ? first.id : first;
+      };
+
+      const channelFor = async (userId) => {
+        let cid = S.channels.getDMFromUserId(userId);
+        if (cid) return cid;
+        if (typeof S.privates.ensurePrivateChannel === 'function') {
+          cid = await S.privates.ensurePrivateChannel(userId);
+          if (cid) return cid;
+        }
+        throw new Error('Discord has no direct message channel with this buddy yet.');
+      };
+
+      const loaded = (cid) => {
+        const list = S.messages.getMessages(cid);
+        if (!list) return [];
+        if (typeof list.toArray === 'function') return list.toArray();
+        return list._array || [];
+      };
+
+      const subscribe = () => {
+        [S.presence, S.relationships, S.users].forEach((s) => s.addChangeListener(schedule));
+        S.dispatcher.subscribe('MESSAGE_CREATE', (a) => {
+          if (!a || a.optimistic || !a.message) return;
+          const channel = S.channels.getChannel(a.channelId);
+          const userId = recipient(channel);
+          if (!userId) return;
+          post({ type: 'discord.message', userId, message: message(a.message) });
+        });
+        S.dispatcher.subscribe('CONNECTION_OPEN', () => setTimeout(() => snapshot(true), 1500));
+        S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
+      };
+
+      window.__aolosDiscord = {
+        snapshot: () => snapshot(true),
+        history: async (userId, limit) => {
+          const cid = await channelFor(userId);
+          if (loaded(cid).length < limit && typeof S.actions.fetchMessages === 'function') {
+            try { await S.actions.fetchMessages({ channelId: cid, limit: Math.max(limit, 25) }); } catch (e) {}
+          }
+          return loaded(cid).slice(-limit).map(message);
+        },
+        send: async (userId, content) => {
+          const cid = await channelFor(userId);
+          await S.actions.sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
+                                      undefined, {});
+          return true;
+        },
+        open: (userId) => { S.privates.openPrivateChannel(userId); return true; },
+      };
+
+      let tries = 0;
+      let reported = false;
+      const boot = () => {
+        tries += 1;
+        if (!webpack()) return false;
+        for (const k of missing()) {
+          try { S[k] = wanted[k](); } catch (e) {}
+        }
+        const gaps = missing();
+        if (gaps.length) {
+          if (tries >= 40 && !reported) {
+            reported = true;
+            post({ type: 'discord.unavailable', missing: gaps });
+          }
+          return false;
+        }
+        if (!S.users.getCurrentUser()) return false;
+        subscribe();
+        post({ type: 'discord.ready' });
+        snapshot(true);
+        return true;
+      };
+      const timer = setInterval(() => { if (boot()) clearInterval(timer); }, 1500);
+    })();
+    """#
+}

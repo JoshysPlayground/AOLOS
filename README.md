@@ -26,7 +26,7 @@ Command Q exits. Command H hides the app. Command Tab still switches apps.
 | Read | Native Mailbox for Gmail | IMAP |
 | Write | Native Write Mail window | SMTP |
 | IM | Slack | `https://app.slack.com/client` |
-| Chat | Discord | `https://discord.com/channels/@me` |
+| People | Buddy List for Discord, or the Discord web app | `https://discord.com/channels/@me` |
 | Music | AOL Radio for Spotify, or YouTube Music | Spotify Web API, `https://music.youtube.com` |
 | Pictures | AOL Pictures for the Mac Photos library | PhotoKit |
 | Finance | Your bank | Set on first use |
@@ -94,6 +94,38 @@ Discord or Slack plays that service's sound and turns its title bar orange
 until you open it. Turn on desktop notifications inside each service for this
 to fire.
 
+## Buddy List
+
+The Buddy List shows your Discord friends in AIM style. It opens at sign on
+unless that is turned off in Settings. The keyword `buddy list` and the People
+button also open it.
+
+The list reads friends and presence from the Discord web app, so People
+Connection stays open, minimized if you like. Sign in to Discord there once.
+Closing that window signs the Buddy List off.
+
+Presence changes play these sounds:
+
+| Change | Sound |
+| --- | --- |
+| Signs on, from any device | `buddyin` |
+| Signs off | `buddyout` |
+| Goes idle | `doorclose` |
+| Comes back from idle | `dooropen` |
+
+Do Not Disturb counts as signed on. A phone icon marks a friend who is online
+only on the Discord mobile app.
+
+Double click a buddy to open an Instant Message window for your direct
+messages with them. A new direct message opens its window and plays `imrcv`.
+Return sends and plays `imsend`. Shift Return adds a line. The B, I, U, S and
+code buttons wrap the selection in Discord markdown.
+
+The bridge script is `Scripts.discordBridge` in
+[DiscordScripts.swift](Sources/AOLOS/Discord/DiscordScripts.swift). It uses
+the web client's internal stores, which Discord can change in any release.
+When it cannot find them the Buddy List says so.
+
 ## Passwords
 
 Sign on asks for Touch ID or the Mac password. Turn this off in Settings.
@@ -106,8 +138,10 @@ off for it.
 
 ## Limits
 
-Discord has no supported API for personal messages. Chat and IM are the
-Discord and Slack web apps.
+Discord has no supported API for personal messages. The Buddy List reads the
+Discord web app's internal state instead. Discord's
+[Terms of Service](https://discord.com/terms) forbid modifying or automating
+the client, so this can put the account at risk. IM is the Slack web app.
 
 Spotify playback depends on Spotify supporting DRM in WebKit. YouTube Music
 does not need it.

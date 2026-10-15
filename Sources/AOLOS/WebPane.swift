@@ -42,6 +42,10 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
             controller.addUserScript(WKUserScript(source: Scripts.notificationShim, injectionTime: .atDocumentStart,
                                                   forMainFrameOnly: false))
         }
+        if service?.wantsHooks ?? true, let service, DiscordBridge.isDiscordHost(URL(string: service.url)?.host) {
+            controller.addUserScript(WKUserScript(source: Scripts.discordBridge, injectionTime: .atDocumentEnd,
+                                                  forMainFrameOnly: true))
+        }
         if service?.wantsAutofill ?? true {
             controller.addUserScript(WKUserScript(source: Scripts.autofill, injectionTime: .atDocumentEnd,
                                                   forMainFrameOnly: true, in: Scripts.autofillWorld))
@@ -137,6 +141,11 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
         switch type {
         case "notification":
             session?.attention(from: self, sound: service?.notifySound ?? "notify")
+
+        case let discordType where discordType.hasPrefix("discord."):
+            guard message.frameInfo.isMainFrame, origin.protocol == "https",
+                  DiscordBridge.isDiscordHost(origin.host) else { return }
+            session?.discord.receive(discordType, body, from: self)
 
         case "credential":
             guard message.frameInfo.isMainFrame, origin.protocol == "https",

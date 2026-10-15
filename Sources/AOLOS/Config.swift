@@ -22,7 +22,7 @@ struct AOLConfig: Codable {
     var screenName = NSUserName()
     var requireTouchID = true
     var soundsEnabled = true
-    var openAtSignOn = ["mail"]
+    var openAtSignOn = ["mail", "buddylist"]
     var services = AOLConfig.defaultServices
     var keywords = AOLConfig.defaultKeywords
     var neverSaveHosts: [String] = []
@@ -88,7 +88,8 @@ struct AOLConfig: Codable {
     static let defaultKeywords: [String: String] = [
         "mail": "mail", "gmail": "mail", "write": "write",
         "chat": "chat", "discord": "chat", "people": "chat",
-        "im": "im", "aim": "im", "slack": "im",
+        "im": "im", "slack": "im",
+        "buddy list": "buddylist", "buddylist": "buddylist", "buddies": "buddylist", "aim": "buddylist",
         "music": "radio", "ytmusic": "ytmusic", "youtube music": "ytmusic", "spotify": "spotify",
         "finance": "finance", "bank": "finance",
         "welcome": "welcome", "settings": "settings",

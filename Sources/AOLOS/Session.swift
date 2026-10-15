@@ -24,6 +24,10 @@ final class Session {
     let spotify = SpotifyService()
     var radioWindow: MDIWindow?
     var radioView: RadioView?
+    let discord = DiscordBridge()
+    var buddyListWindow: MDIWindow?
+    var buddyListView: BuddyListView?
+    var imWindows: [String: MDIWindow] = [:]
     let photos = PhotoLibrary()
     var picturesWindow: MDIWindow?
     var picturesView: PicturesView?
@@ -38,6 +42,7 @@ final class Session {
         SoundManager.writeSoundsReadme()
         buildChrome()
         setUpMail()
+        setUpDiscord()
         desktop.onChange = { [weak self] in self?.refreshNav() }
     }
 
@@ -149,6 +154,7 @@ final class Session {
         mail.stop()
         spotify.stopPolling()
         desktop.closeAll(includingPinned: true)
+        closeDiscordWindows()
         serviceWindows.removeAll()
         mailboxWindow = nil
         mailboxView = nil
@@ -220,6 +226,7 @@ final class Session {
         case "mail" where !web: openMailbox(minimized: minimized); return
         case "write" where !web: openCompose(); return
         case "radio": openRadio(); return
+        case "buddylist": openBuddyList(); return
         case "spotify" where !web: openRadio(); return
         case "photos" where !web: openPictures(); return
         default: break
@@ -237,7 +244,10 @@ final class Session {
         let window = MDIWindow(title: service.title, icon: Icons.symbol(service.icon, colors: [.white]), content: pane)
         pane.host = window
         window.focusView = pane.webView
-        window.onClose = { [weak self] in self?.serviceWindows[id] = nil }
+        window.onClose = { [weak self, weak pane] in
+            self?.serviceWindows[id] = nil
+            if let pane { self?.discord.paneClosed(pane) }
+        }
         serviceWindows[id] = window
         desktop.add(window, minimized: minimized)
     }
@@ -306,6 +316,8 @@ final class Session {
             openService("mail", web: true)
         } else if key == "radio" || key == "aol radio" {
             openRadio()
+        } else if ["buddy list", "buddylist", "buddies", "aim"].contains(key) {
+            openBuddyList()
         } else if key == "spotify web" {
             openService("spotify", web: true)
         } else if let target = config.keywords[key] {
@@ -426,7 +438,12 @@ final class Session {
             button("Read", "read-closed", "envelope.fill", blue) { [weak self] _ in self?.openService("mail") },
             button("Write", "write", "square.and.pencil", blue) { [weak self] _ in self?.openService("write") },
             button("IM", "im", "figure.run", gold) { [weak self] _ in self?.openService("im") },
-            button("People", "people", "person.2.fill", blue) { [weak self] _ in self?.openService("chat") },
+            button("People", "people", "person.2.fill", blue) { [weak self] b in
+                let menu = NSMenu()
+                menu.addItem(ActionItem("Buddy List") { [weak self] in self?.openBuddyList() })
+                menu.addItem(ActionItem("People Connection") { [weak self] in self?.openService("chat") })
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+            },
             button("Safety", "safety", "shield.lefthalf.filled", blue) { [weak self] _ in self?.openSafety() },
             button("Settings", "settings", "checkmark.square.fill", gold) { [weak self] _ in self?.openSettings() },
             button("Music", "music", "headphones", purple) { [weak self] b in
