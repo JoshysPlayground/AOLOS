@@ -150,6 +150,9 @@ final class MDIWindow: FlippedView {
         titleBar.maxButton.action = { [weak self] in self?.toggleMaximize() }
         titleBar.closeButton.action = { [weak self] in self.map { $0.desktop?.close($0) } }
         wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        updateCorners()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -180,6 +183,11 @@ final class MDIWindow: FlippedView {
 
     func activate() { desktop?.activate(self) }
 
+    /// Luna rounds only the top corners, and a maximized window has none. The layer is flipped with the view, so min Y is the top.
+    private func updateCorners() {
+        layer?.cornerRadius = isMaximized ? 0 : 8
+    }
+
     func toggleMaximize() {
         guard let desktop, resizable else { return }
         if isMaximized {
@@ -187,12 +195,14 @@ final class MDIWindow: FlippedView {
             autoresizingMask = []
             frame = restoreFrame
             titleBar.maxButton.kind = .maximize
+            updateCorners()
         } else {
             restoreFrame = frame
             isMaximized = true
             frame = desktop.bounds
             autoresizingMask = [.width, .height]
             titleBar.maxButton.kind = .restore
+            updateCorners()
         }
         needsLayout = true
         window?.invalidateCursorRects(for: self)
