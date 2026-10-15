@@ -93,12 +93,14 @@ actor IMAPConnection {
         throw MailError.protocolError("Message \(uid) was not returned.")
     }
 
-    func setSeen(_ uid: UInt32, _ seen: Bool) async throws {
-        try await command("UID STORE \(uid) \(seen ? "+" : "-")FLAGS.SILENT (\\Seen)")
+    func setSeen(_ uids: [UInt32], _ seen: Bool) async throws {
+        guard !uids.isEmpty else { return }
+        try await command("UID STORE \(IMAPParser.uidSet(uids)) \(seen ? "+" : "-")FLAGS.SILENT (\\Seen)")
     }
 
-    func move(_ uid: UInt32, to mailbox: String) async throws {
-        try await command("UID MOVE \(uid) \(IMAPParser.quote(mailbox))")
+    func move(_ uids: [UInt32], to mailbox: String) async throws {
+        guard !uids.isEmpty else { return }
+        try await command("UID MOVE \(IMAPParser.uidSet(uids)) \(IMAPParser.quote(mailbox))")
     }
 
     /// Waits for mailbox changes. Returns true when the server reported new or removed messages.

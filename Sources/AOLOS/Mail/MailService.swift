@@ -106,7 +106,7 @@ final class MailService {
         let raw = try await serial { c -> Data in
             try await c.select(summary.folder)
             let raw = try await c.fetchRaw(summary.uid)
-            if !summary.seen { try await c.setSeen(summary.uid, true) }
+            if !summary.seen { try await c.setSeen([summary.uid], true) }
             return raw
         }
         if !summary.seen { markLocally(summary, seen: true) }
@@ -114,22 +114,45 @@ final class MailService {
     }
 
     func setSeen(_ summary: MailSummary, _ seen: Bool) async throws {
-        try await serial { c in
-            try await c.select(summary.folder)
-            try await c.setSeen(summary.uid, seen)
+        try await setSeen([summary], seen)
+    }
+
+    /// Sends one STORE per folder for the whole selection.
+    func setSeen(_ summaries: [MailSummary], _ seen: Bool) async throws {
+        let changing = summaries.filter { $0.seen != seen }
+        guard !changing.isEmpty else { return }
+        for (folder, group) in Dictionary(grouping: changing, by: \.folder) {
+            let uids = group.map(\.uid)
+            try await serial { c in
+                try await c.select(folder)
+                try await c.setSeen(uids, seen)
+            }
         }
-        markLocally(summary, seen: seen)
+        for summary in changing { markLocally(summary, seen: seen, notify: false) }
+        onChange?()
     }
 
     func delete(_ summary: MailSummary) async throws {
+        try await delete([summary])
+    }
+
+    /// Moves the whole selection to Trash with one MOVE per folder.
+    func delete(_ summaries: [MailSummary]) async throws {
+        guard !summaries.isEmpty else { return }
         let trash = folders.trash
-        try await serial { c in
-            try await c.select(summary.folder)
-            try await c.move(summary.uid, to: trash)
+        for (folder, group) in Dictionary(grouping: summaries, by: \.folder) {
+            let uids = group.map(\.uid)
+            try await serial { c in
+                try await c.select(folder)
+                try await c.move(uids, to: trash)
+            }
         }
-        inbox.removeAll { $0.uid == summary.uid && $0.folder == summary.folder }
-        sent.removeAll { $0.uid == summary.uid && $0.folder == summary.folder }
-        if knownUnseen.remove(summary.uid) != nil, summary.folder == "INBOX" { unreadCount = max(0, unreadCount - 1) }
+        let keys = Set(summaries.map { "\($0.folder)/\($0.uid)" })
+        inbox.removeAll { keys.contains("\($0.folder)/\($0.uid)") }
+        sent.removeAll { keys.contains("\($0.folder)/\($0.uid)") }
+        for summary in summaries where summary.folder == "INBOX" && knownUnseen.remove(summary.uid) != nil {
+            unreadCount = max(0, unreadCount - 1)
+        }
         onChange?()
     }
 
@@ -140,7 +163,7 @@ final class MailService {
         Task { [weak self] in try? await self?.refreshSent() }
     }
 
-    private func markLocally(_ summary: MailSummary, seen: Bool) {
+    private func markLocally(_ summary: MailSummary, seen: Bool, notify: Bool = true) {
         if let i = inbox.firstIndex(where: { $0.uid == summary.uid && $0.folder == summary.folder }) {
             inbox[i].seen = seen
         }
@@ -148,7 +171,7 @@ final class MailService {
             if seen, knownUnseen.remove(summary.uid) != nil { unreadCount = max(0, unreadCount - 1) }
             if !seen, knownUnseen.insert(summary.uid).inserted { unreadCount += 1 }
         }
-        onChange?()
+        if notify { onChange?() }
     }
 
     private func setStatus(_ text: String) {

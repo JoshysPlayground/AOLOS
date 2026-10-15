@@ -90,15 +90,28 @@ final class ButtonBar: FlippedView {
     }
 }
 
-final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate {
-    enum Action { case read, write, reply, forward, keepAsNew, delete, refresh, connect, webGmail }
+/// Sends the Delete key to the mailbox instead of beeping.
+final class MailTableView: NSTableView {
+    var onDeleteKey: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 51 || event.keyCode == 117 {
+            onDeleteKey?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
+final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+    enum Action { case read, write, reply, forward, markRead, keepAsNew, delete, refresh, connect, webGmail }
 
     let mail: MailService
-    var onAction: ((Action, MailSummary?) -> Void)?
+    var onAction: ((Action, [MailSummary]) -> Void)?
     var onOpen: ((MailSummary) -> Void)?
 
     private let tabs = TabStrip()
-    private let table = NSTableView()
+    private let table = MailTableView()
     private let scroll = NSScrollView()
     private let bar = ButtonBar()
     private let connectPanel = FlippedView()
@@ -107,9 +120,8 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     private var rows: [MailSummary] = []
     private var buttons: [Action: ChromeButton] = [:]
 
-    var selectedSummary: MailSummary? {
-        let row = table.selectedRow
-        return row >= 0 && row < rows.count ? rows[row] : nil
+    var selectedSummaries: [MailSummary] {
+        table.selectedRowIndexes.filter { $0 < rows.count }.map { rows[$0] }
     }
 
     init(mail: MailService) {
@@ -138,6 +150,11 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         table.delegate = self
         table.target = self
         table.doubleAction = #selector(openSelected)
+        table.allowsMultipleSelection = true
+        table.onDeleteKey = { [weak self] in self?.perform(.delete) }
+        let menu = NSMenu()
+        menu.delegate = self
+        table.menu = menu
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
@@ -145,7 +162,8 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         let specs: [(Action, String, String?)] = [
             (.read, "Read", "envelope.open"), (.write, "Write", "square.and.pencil"),
             (.reply, "Reply", "arrowshape.turn.up.left"), (.forward, "Forward", "arrowshape.turn.up.right"),
-            (.keepAsNew, "Keep As New", "envelope.badge"), (.delete, "Delete", "trash"),
+            (.markRead, "Mark as Read", "envelope.open.fill"), (.keepAsNew, "Keep As New", "envelope.badge"),
+            (.delete, "Delete", "trash"),
             (.refresh, "Refresh", "arrow.clockwise"),
         ]
         bar.buttons = specs.map { action, title, symbol in
@@ -158,10 +176,10 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         connectLabel.font = Theme.ui(13)
         connectLabel.alignment = .center
         let connect = ChromeButton(title: "Connect Gmail", symbol: "person.badge.key.fill", prominent: true) { [weak self] in
-            self?.onAction?(.connect, nil)
+            self?.onAction?(.connect, [])
         }
         let web = ChromeButton(title: "Open Gmail on the Web", symbol: "globe") { [weak self] in
-            self?.onAction?(.webGmail, nil)
+            self?.onAction?(.webGmail, [])
         }
         connect.identifier = NSUserInterfaceItemIdentifier("connect")
         web.identifier = NSUserInterfaceItemIdentifier("web")
@@ -196,16 +214,15 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func reload() {
-        let selectedUID = selectedSummary?.uid
+        let selectedKeys = Set(selectedSummaries.map { "\($0.folder)/\($0.uid)" })
         rows = mail.summaries(for: box)
         let newCount = mail.summaries(for: .new).count
         tabs.titles = [newCount > 0 ? "New Mail (\(newCount))" : "New Mail", "Old Mail", "Sent Mail"]
         tabs.selected = box.rawValue
         table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("who"))?.title = box == .sent ? "To" : "From"
         table.reloadData()
-        if let selectedUID, let i = rows.firstIndex(where: { $0.uid == selectedUID }) {
-            table.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
-        }
+        let keep = IndexSet(rows.indices.filter { selectedKeys.contains("\(rows[$0].folder)/\(rows[$0].uid)") })
+        table.selectRowIndexes(keep, byExtendingSelection: false)
 
         let connected = mail.auth.isConnected
         connectPanel.isHidden = connected
@@ -214,30 +231,63 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
             ? "Gmail is not connected. Sign in with Google to read your mail here."
             : "This build has no Google OAuth client. Add one in Settings, then connect."
 
-        let count = rows.count
-        let noun = box == .new ? "new" : (box == .old ? "old" : "sent")
-        bar.statusLabel.stringValue = connected ? "\(count) \(noun) message\(count == 1 ? "" : "s").  \(mail.status)" : mail.status
         updateButtons()
     }
 
-    private func updateButtons() {
-        let hasSelection = selectedSummary != nil && mail.auth.isConnected
-        for action in [Action.read, .reply, .forward, .delete] { buttons[action]?.isEnabled = hasSelection }
-        buttons[.keepAsNew]?.isEnabled = hasSelection && box != .sent
-        buttons[.write]?.isEnabled = mail.auth.isConnected
-        buttons[.refresh]?.isEnabled = mail.auth.isConnected
-    }
-
-    private func perform(_ action: Action) {
-        if action == .read {
-            openSelected()
-        } else {
-            onAction?(action, selectedSummary)
+    private func enabled(_ action: Action, for selection: [MailSummary]) -> Bool {
+        guard mail.auth.isConnected else { return false }
+        switch action {
+        case .write, .refresh, .connect, .webGmail: return true
+        case .read, .delete: return !selection.isEmpty
+        case .reply, .forward: return selection.count == 1
+        case .markRead: return selection.contains { !$0.seen }
+        case .keepAsNew: return box != .sent && selection.contains { $0.seen }
         }
     }
 
+    private func updateButtons() {
+        let selection = selectedSummaries
+        for (action, button) in buttons { button.isEnabled = enabled(action, for: selection) }
+        let count = rows.count
+        let noun = box == .new ? "new" : (box == .old ? "old" : "sent")
+        var status = "\(count) \(noun) message\(count == 1 ? "" : "s")"
+        if selection.count > 1 { status += ", \(selection.count) selected" }
+        bar.statusLabel.stringValue = mail.auth.isConnected ? "\(status).  \(mail.status)" : mail.status
+    }
+
+    private func perform(_ action: Action) {
+        let selection = selectedSummaries
+        guard enabled(action, for: selection) else { return }
+        if action == .read {
+            openSelected()
+        } else {
+            onAction?(action, selection)
+        }
+    }
+
+    /// Opens up to five selected messages so a large selection does not flood the desktop.
     @objc private func openSelected() {
-        if let s = selectedSummary { onOpen?(s) }
+        for summary in selectedSummaries.prefix(5) { onOpen?(summary) }
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let clicked = table.clickedRow
+        if clicked >= 0, !table.selectedRowIndexes.contains(clicked) {
+            table.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+        }
+        let selection = selectedSummaries
+        let entries: [(Action, String)] = [
+            (.read, "Read"), (.reply, "Reply"), (.forward, "Forward"),
+            (.markRead, "Mark as Read"), (.keepAsNew, "Keep As New"), (.delete, "Delete"),
+        ]
+        for (action, title) in entries {
+            if action == .markRead || action == .delete { menu.addItem(.separator()) }
+            let item = ActionItem(title) { [weak self] in self?.perform(action) }
+            item.isEnabled = enabled(action, for: selection)
+            menu.addItem(item)
+        }
+        menu.autoenablesItems = false
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }

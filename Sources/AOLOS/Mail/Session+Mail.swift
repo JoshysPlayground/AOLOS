@@ -45,7 +45,7 @@ extension Session {
         }
         let view = MailboxView(mail: mail)
         view.onOpen = { [weak self] summary in self?.openMessage(summary) }
-        view.onAction = { [weak self] action, summary in self?.mailboxAction(action, summary) }
+        view.onAction = { [weak self] action, summaries in self?.mailboxAction(action, summaries) }
         let window = MDIWindow(title: "Mailbox", icon: Icons.symbol("envelope.fill", colors: [.white]), content: view)
         window.minSize = NSSize(width: 560, height: 320)
         window.onClose = { [weak self] in
@@ -57,10 +57,11 @@ extension Session {
         desktop.add(window, minimized: minimized)
     }
 
-    private func mailboxAction(_ action: MailboxView.Action, _ summary: MailSummary?) {
+    private func mailboxAction(_ action: MailboxView.Action, _ summaries: [MailSummary]) {
+        let summary = summaries.first
         switch action {
         case .read:
-            if let summary { openMessage(summary) }
+            summaries.prefix(5).forEach(openMessage)
         case .write:
             openCompose()
         case .reply, .forward:
@@ -74,15 +75,14 @@ extension Session {
                     self.showMailError(error)
                 }
             }
-        case .keepAsNew:
-            guard let summary else { return }
+        case .markRead, .keepAsNew:
+            let seen = action == .markRead
             Task { [weak self] in
-                do { try await self?.mail.setSeen(summary, false) } catch { self?.showMailError(error) }
+                do { try await self?.mail.setSeen(summaries, seen) } catch { self?.showMailError(error) }
             }
         case .delete:
-            guard let summary else { return }
             Task { [weak self] in
-                do { try await self?.mail.delete(summary) } catch { self?.showMailError(error) }
+                do { try await self?.mail.delete(summaries) } catch { self?.showMailError(error) }
             }
         case .refresh:
             mail.start()
