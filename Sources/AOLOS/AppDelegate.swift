@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .aqua)
+        if let brand = Icons.brand { NSApp.applicationIconImage = brand }
         let shell = ShellView(framed: !windowed)
 
         if windowed {

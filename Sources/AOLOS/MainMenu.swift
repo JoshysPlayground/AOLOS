@@ -141,7 +141,7 @@ enum MainMenu {
 
     static func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "AOL-OS 9.0 Optimized SE"
+        alert.messageText = "AOL Operating System"
         alert.informativeText = "A personal desktop shell for Gmail, Discord, Slack, music and banking."
         alert.runModal()
     }

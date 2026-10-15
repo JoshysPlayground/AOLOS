@@ -62,9 +62,12 @@ Git ignores sound files. Supply your own.
 
 ## Branding
 
-The Sign On window shows `Branding/signon-logo.png` when it exists, in the
-same two places as sounds. Without it, the window draws a plain AOL-OS
-wordmark. Git ignores branding images.
+Branding images live in the same two places as sounds. Git ignores them.
+
+| File | Used for | Without it |
+| --- | --- | --- |
+| `Branding/signon-logo.png` | Sign On window logo | A plain AOL-OS wordmark |
+| `Branding/titlebar-icon.png` | Title bar, Sign On window and Dock icon | A white triangle |
 
 ## Notifications
 

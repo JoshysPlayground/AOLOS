@@ -71,7 +71,7 @@ final class Session {
             alert.informativeText = "Pick a screen name and click Sign On. Sign On asks for Touch ID or your Mac password unless that is turned off under Sign On Options. Dial-Up (56K) takes the long way and plays dialup.wav from the Sounds folder."
             alert.runModal()
         }
-        let window = MDIWindow(title: "Sign On", icon: Icons.symbol("triangle.fill", colors: [.white]), content: view)
+        let window = MDIWindow(title: "Sign On", icon: Icons.brandOrTriangle(), content: view)
         window.closable = false
         window.resizable = false
         window.focusView = view

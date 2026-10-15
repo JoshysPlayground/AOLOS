@@ -43,6 +43,13 @@ enum Theme {
 }
 
 enum Icons {
+    /// Branding/titlebar-icon.png when present, otherwise a plain triangle. The artwork is not in the repository.
+    static let brand: NSImage? = AppPaths.brandingImage("titlebar-icon.png")
+
+    static func brandOrTriangle(size: CGFloat = 12) -> NSImage? {
+        brand ?? symbol("triangle.fill", size: size, colors: [.white])
+    }
+
     static func symbol(_ name: String, size: CGFloat = 13, colors: [NSColor]? = nil) -> NSImage? {
         guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
         var config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold)

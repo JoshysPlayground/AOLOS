@@ -5,7 +5,7 @@ final class AppTitleBar: FlippedView {
     let minButton = CaptionButton(kind: .minimize)
     let maxButton = CaptionButton(kind: .maximize)
     let closeButton = CaptionButton(kind: .close)
-    var title = "AOL-OS 9.0 Optimized SE" { didSet { needsDisplay = true } }
+    var title = "AOL Operating System" { didSet { needsDisplay = true } }
     var onDoubleClick: (() -> Void)?
 
     override init(frame: NSRect) {
@@ -50,12 +50,12 @@ final class AppTitleBar: FlippedView {
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.gradient(window?.isKeyWindow == false ? Theme.titleInactive : Theme.titleActive, in: bounds)
-        if let icon = Icons.symbol("triangle.fill", size: 12, colors: [.white]) {
-            icon.draw(in: NSRect(x: 7, y: (bounds.height - 14) / 2, width: 14, height: 14),
+        if let icon = Icons.brandOrTriangle() {
+            icon.draw(in: NSRect(x: 6, y: (bounds.height - 18) / 2, width: 18, height: 18),
                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
         drawText(title, font: Theme.caption(13), color: .white,
-                 in: NSRect(x: 27, y: 0, width: bounds.width - 100, height: bounds.height), shadow: true)
+                 in: NSRect(x: 30, y: 0, width: bounds.width - 120, height: bounds.height), shadow: true)
     }
 }
 
