@@ -57,6 +57,9 @@ final class DiscordBridge {
         attach(pane)
         switch type {
         case "discord.ready":
+            if let missing = body["missing"] as? [String], !missing.isEmpty {
+                NSLog("AOL-OS: Discord bridge is running without \(missing.joined(separator: ", "))")
+            }
             state = .ready
             onChange?()
         case "discord.friends":
@@ -74,7 +77,7 @@ final class DiscordBridge {
             onChange?()
         case "discord.unavailable":
             let missing = (body["missing"] as? [String] ?? []).joined(separator: ", ")
-            NSLog("AOL-OS: Discord bridge could not find \(missing)")
+            NSLog("AOL-OS: Discord bridge could not find \(missing) in \(body["modules"] ?? 0) modules. \(body["error"] ?? "")")
             state = .unavailable(missing)
             onChange?()
         default:

@@ -16,12 +16,16 @@ extension Scripts {
         if (req) return req;
         const chunk = window.webpackChunkdiscord_app;
         if (!chunk || typeof chunk.push !== 'function') return null;
-        let found = null;
+        // Each webpack runtime on the page forwards the push to the one before it, so the callback runs once
+        // per runtime. The main client is the runtime with the largest module cache.
+        const found = [];
         try {
-          chunk.push([[Symbol('aolos')], {}, (r) => { found = r; }]);
+          chunk.push([[Symbol('aolos')], {}, (r) => { found.push(r); }]);
           chunk.pop();
         } catch (e) { return null; }
-        if (found && found.c) req = found;
+        const size = (r) => (r && r.c ? Object.keys(r.c).length : 0);
+        const best = found.sort((a, b) => size(b) - size(a))[0];
+        if (size(best) > 0) req = best;
         return req;
       };
 
@@ -29,11 +33,15 @@ extension Scripts {
         const r = webpack();
         if (!r) return;
         for (const id of Object.keys(r.c)) {
-          const e = r.c[id] && r.c[id].exports;
+          let e;
+          try { e = r.c[id] && r.c[id].exports; } catch (err) { continue; }
           if (!e || e === window) continue;
           yield e;
           if (typeof e !== 'object') continue;
-          for (const k of Object.keys(e)) {
+          let keys = [];
+          // Some exports are proxies whose key lookup throws.
+          try { keys = Object.keys(e); } catch (err) { continue; }
+          for (const k of keys) {
             let v;
             try { v = e[k]; } catch (err) { continue; }
             if (v && v !== e && (typeof v === 'object' || typeof v === 'function')) yield v;
@@ -65,7 +73,17 @@ extension Scripts {
         actions: () => find((e) => typeof e.sendMessage === 'function' && typeof e.editMessage === 'function'),
         privates: () => find((e) => typeof e.openPrivateChannel === 'function'),
       };
-      const missing = () => Object.keys(wanted).filter((k) => !S[k]);
+      const required = ['presence', 'relationships', 'users', 'dispatcher'];
+      const missing = (keys) => keys.filter((k) => !S[k]);
+
+      const need = (k) => {
+        if (!S[k]) {
+          req = null;
+          try { S[k] = wanted[k](); } catch (e) {}
+        }
+        if (!S[k]) throw new Error(`AOL-OS could not find Discord's ${k} module.`);
+        return S[k];
+      };
 
       const avatar = (u, id) => {
         if (u && u.avatar) return `https://cdn.discordapp.com/avatars/${id}/${u.avatar}.png?size=64`;
@@ -169,17 +187,25 @@ extension Scripts {
       };
 
       const channelFor = async (userId) => {
-        let cid = S.channels.getDMFromUserId(userId);
+        let cid = need('channels').getDMFromUserId(userId);
         if (cid) return cid;
-        if (typeof S.privates.ensurePrivateChannel === 'function') {
+        if (S.privates && typeof S.privates.ensurePrivateChannel === 'function') {
           cid = await S.privates.ensurePrivateChannel(userId);
+          if (cid) return cid;
+        }
+        if (S.privates && typeof S.privates.openPrivateChannel === 'function') {
+          S.privates.openPrivateChannel(userId);
+          for (let i = 0; i < 20 && !cid; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            cid = S.channels.getDMFromUserId(userId);
+          }
           if (cid) return cid;
         }
         throw new Error('Discord has no direct message channel with this buddy yet.');
       };
 
       const loaded = (cid) => {
-        const list = S.messages.getMessages(cid);
+        const list = need('messages').getMessages(cid);
         if (!list) return [];
         if (typeof list.toArray === 'function') return list.toArray();
         return list._array || [];
@@ -189,6 +215,7 @@ extension Scripts {
         [S.presence, S.relationships, S.users].forEach((s) => s.addChangeListener(schedule));
         S.dispatcher.subscribe('MESSAGE_CREATE', (a) => {
           if (!a || a.optimistic || !a.message) return;
+          if (!S.channels) return;
           const channel = S.channels.getChannel(a.channelId);
           const userId = recipient(channel);
           if (!userId) return;
@@ -202,39 +229,42 @@ extension Scripts {
         snapshot: () => snapshot(true),
         history: async (userId, limit) => {
           const cid = await channelFor(userId);
-          if (loaded(cid).length < limit && typeof S.actions.fetchMessages === 'function') {
+          if (loaded(cid).length < limit && S.actions && typeof S.actions.fetchMessages === 'function') {
             try { await S.actions.fetchMessages({ channelId: cid, limit: Math.max(limit, 25) }); } catch (e) {}
           }
           return loaded(cid).slice(-limit).map(message);
         },
         send: async (userId, content) => {
           const cid = await channelFor(userId);
-          await S.actions.sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
+          await need('actions').sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
                                       undefined, {});
           return true;
         },
-        open: (userId) => { S.privates.openPrivateChannel(userId); return true; },
+        open: (userId) => { need('privates').openPrivateChannel(userId); return true; },
       };
 
       let tries = 0;
       let reported = false;
+      let lastError = '';
       const boot = () => {
         tries += 1;
         if (!webpack()) return false;
-        for (const k of missing()) {
-          try { S[k] = wanted[k](); } catch (e) {}
+        for (const k of missing(Object.keys(wanted))) {
+          try { S[k] = wanted[k](); } catch (e) { lastError = String(e); }
         }
-        const gaps = missing();
+        const gaps = missing(required);
         if (gaps.length) {
+          // The page can load a small webpack runtime before the full client, so look it up again next time.
           if (tries >= 40 && !reported) {
             reported = true;
-            post({ type: 'discord.unavailable', missing: gaps });
+            post({ type: 'discord.unavailable', missing: gaps, modules: Object.keys(req.c).length, error: lastError });
           }
+          req = null;
           return false;
         }
         if (!S.users.getCurrentUser()) return false;
         subscribe();
-        post({ type: 'discord.ready' });
+        post({ type: 'discord.ready', missing: missing(Object.keys(wanted)) });
         snapshot(true);
         return true;
       };
