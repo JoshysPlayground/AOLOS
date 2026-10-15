@@ -12,10 +12,11 @@ final class WelcomeMessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 /// The Welcome screen. Local HTML that sends `open` and `keyword` messages back to the session.
-final class WelcomePane: FlippedView {
+final class WelcomePane: FlippedView, WKNavigationDelegate {
     let webView: WKWebView
     private let handler = WelcomeMessageHandler()
-    private var mailCount = 0
+    private var mailState: (String, Bool)?
+    private var loaded = false
 
     init(session: Session, screenName: String) {
         let config = WKWebViewConfiguration()
@@ -24,6 +25,7 @@ final class WelcomePane: FlippedView {
         webView = WKWebView(frame: .zero, configuration: config)
         super.init(frame: .zero)
         handler.session = session
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         webView.autoresizingMask = [.width, .height]
         addSubview(webView)
@@ -37,10 +39,21 @@ final class WelcomePane: FlippedView {
         webView.frame = bounds
     }
 
-    func setMailCount(_ count: Int) {
-        guard count != mailCount else { return }
-        mailCount = count
-        webView.evaluateJavaScript("window.setMail && setMail(\(count))")
+    func setMailState(_ text: String, hasMail: Bool) {
+        if let current = mailState, current.0 == text, current.1 == hasMail { return }
+        mailState = (text, hasMail)
+        if loaded { applyMailState() }
+    }
+
+    private func applyMailState() {
+        guard let (text, hasMail) = mailState else { return }
+        webView.callAsyncJavaScript("window.setMail && setMail(text, has)",
+                                    arguments: ["text": text, "has": hasMail], in: nil, in: .page, completionHandler: nil)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loaded = true
+        applyMailState()
     }
 
     private static func escape(_ s: String) -> String {
@@ -133,9 +146,9 @@ final class WelcomePane: FlippedView {
             const openId = (id) => post({ open: id });
             const kw = (text) => post({ keyword: text });
             function go(e) { e.preventDefault(); const v = document.getElementById('kw').value.trim(); if (v) kw(v); }
-            function setMail(n) {
-              document.getElementById('mailTitle').textContent = n > 0 ? "You've Got Mail! (" + n + " new)" : 'No new mail';
-              document.getElementById('mail').classList.toggle('has', n > 0);
+            function setMail(text, has) {
+              document.getElementById('mailTitle').textContent = text;
+              document.getElementById('mail').classList.toggle('has', has);
             }
             document.getElementById('date').textContent =
               new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });

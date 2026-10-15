@@ -21,16 +21,19 @@ Command Q exits. Command H hides the app. Command Tab still switches apps.
 
 ## Services
 
-| Toolbar | Service | Default address |
+| Toolbar | Service | Source |
 | --- | --- | --- |
-| Read | Gmail | `https://mail.google.com` |
-| Write | Gmail compose | `https://mail.google.com` |
+| Read | Native Mailbox for Gmail | IMAP |
+| Write | Native Write Mail window | SMTP |
 | IM | Slack | `https://app.slack.com/client` |
 | Chat | Discord | `https://discord.com/channels/@me` |
 | Music | YouTube Music or Spotify | `https://music.youtube.com`, `https://open.spotify.com` |
 | Finance | Your bank | Set on first use |
 
-Services live in `~/Library/Application Support/AOL-OS/config.json`. Each
+Mail needs a one-time Google OAuth setup. See [docs/gmail.md](docs/gmail.md).
+The keyword `gmail` opens Gmail on the web instead.
+
+Web services live in `~/Library/Application Support/AOL-OS/config.json`. Each
 service names a `profile`. Services with the same profile share cookies and
 logins, so Gmail and YouTube Music sign in once through `google`.
 
@@ -56,13 +59,13 @@ Git ignores sound files. Supply your own.
 
 ## Notifications
 
-Each web window replaces the page's Notification API. A notification from
-Gmail, Discord, or Slack plays that service's sound and turns its title bar
-orange until you open it. Turn on desktop notifications inside each service
-for this to fire.
+The Mailbox keeps an IMAP IDLE connection open. New mail plays `gotmail` and
+turns the Mailbox title bar orange.
 
-Gmail also plays its sound when the unread count in its page title goes up.
-Mail opens minimized at sign on so that count is live.
+Each web window replaces the page's Notification API. A notification from
+Discord or Slack plays that service's sound and turns its title bar orange
+until you open it. Turn on desktop notifications inside each service for this
+to fire.
 
 ## Passwords
 

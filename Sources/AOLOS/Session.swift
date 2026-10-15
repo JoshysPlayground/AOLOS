@@ -12,10 +12,14 @@ final class Session {
     private var signOnWindow: MDIWindow?
     private var signOnView: SignOnView?
     private var welcomeWindow: MDIWindow?
-    private var welcomePane: WelcomePane?
+    var welcomePane: WelcomePane?
     private var settingsWindow: MDIWindow?
     private var serviceWindows: [String: MDIWindow] = [:]
     private var savePromptHosts: Set<String> = []
+    let mail = MailService()
+    var mailboxWindow: MDIWindow?
+    var mailboxView: MailboxView?
+    var settingsView: SettingsView?
 
     var desktop: DesktopView { shell.desktop }
     var activeWebPane: WebPane? { desktop.activeWindow?.content as? WebPane }
@@ -26,6 +30,7 @@ final class Session {
         SoundManager.shared.enabled = config.soundsEnabled
         SoundManager.writeSoundsReadme()
         buildChrome()
+        setUpMail()
         desktop.onChange = { [weak self] in self?.refreshNav() }
     }
 
@@ -90,15 +95,20 @@ final class Session {
         shell.setSignedOn(true)
         shell.statusBar.screenName = config.screenName
         SoundManager.shared.play(.welcome)
-        for id in config.openAtSignOn { openService(id, minimized: true) }
+        if config.openAtSignOn.contains("mail") { mail.start() }
+        for id in config.openAtSignOn where id != "mail" && id != "write" { openService(id, minimized: true) }
         openWelcome()
     }
 
     func signOff() {
         guard signedOn else { return }
         SoundManager.shared.play(.goodbye)
+        mail.stop()
         desktop.closeAll(includingPinned: true)
         serviceWindows.removeAll()
+        mailboxWindow = nil
+        mailboxView = nil
+        settingsView = nil
         welcomeWindow = nil
         welcomePane = nil
         settingsWindow = nil
@@ -122,22 +132,25 @@ final class Session {
         welcomeWindow = window
         welcomePane = pane
         desktop.add(window)
-        if let mail = serviceWindows["mail"]?.content as? WebPane { pane.setMailCount(mail.unread) }
+        updateWelcomeMail()
     }
 
     func openSettings() {
         guard signedOn else { return }
         if let w = settingsWindow, w.superview != nil { desktop.activate(w); return }
-        let view = SettingsView(config: config)
+        let view = SettingsView(config: config, auth: mail.auth)
+        view.onConnectGmail = { [weak self] in self?.connectGmail() }
+        view.onDisconnectGmail = { [weak self] in self?.disconnectGmail() }
+        settingsView = view
         let window = MDIWindow(title: "Settings", icon: Icons.symbol("gearshape.fill", colors: [.white]), content: view)
         window.minSize = NSSize(width: 480, height: 330)
         view.onSave = { [weak self, weak window] newConfig in
             self?.apply(newConfig)
             if let window { self?.desktop.close(window) }
         }
-        window.onClose = { [weak self] in self?.settingsWindow = nil }
+        window.onClose = { [weak self] in self?.settingsWindow = nil; self?.settingsView = nil }
         settingsWindow = window
-        desktop.add(window, size: NSSize(width: 520, height: 330), centered: true)
+        desktop.add(window, size: NSSize(width: 560, height: 470), centered: true)
     }
 
     private func apply(_ newConfig: AOLConfig) {
@@ -147,11 +160,14 @@ final class Session {
         shell.statusBar.screenName = config.screenName
     }
 
-    func openService(_ id: String, minimized: Bool = false) {
+    /// `mail` and `write` open the native mailbox unless `web` asks for the Gmail web app.
+    func openService(_ id: String, minimized: Bool = false, web: Bool = false) {
         guard signedOn else { NSSound.beep(); return }
         switch id {
         case "welcome": openWelcome(); return
         case "settings": openSettings(); return
+        case "mail" where !web: openMailbox(minimized: minimized); return
+        case "write" where !web: openCompose(); return
         default: break
         }
         guard let service = config.service(id) else { go(id); return }
@@ -207,9 +223,16 @@ final class Session {
     }
 
     func compose(mailto: URL) {
-        var c = URLComponents(string: "https://mail.google.com/mail/")!
-        c.queryItems = [URLQueryItem(name: "extsrc", value: "mailto"), URLQueryItem(name: "url", value: mailto.absoluteString)]
-        if let url = c.url { openBrowser(url) }
+        guard mail.auth.isConnected else {
+            var c = URLComponents(string: "https://mail.google.com/mail/")!
+            c.queryItems = [URLQueryItem(name: "extsrc", value: "mailto"), URLQueryItem(name: "url", value: mailto.absoluteString)]
+            if let url = c.url { openBrowser(url) }
+            return
+        }
+        let parts = URLComponents(url: mailto, resolvingAgainstBaseURL: false)
+        let query = Dictionary((parts?.queryItems ?? []).map { ($0.name.lowercased(), $0.value ?? "") }) { a, _ in a }
+        openCompose(to: parts?.path.removingPercentEncoding ?? "", cc: query["cc"] ?? "",
+                    subject: query["subject"] ?? "", body: query["body"] ?? "")
     }
 
 
@@ -225,7 +248,9 @@ final class Session {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let key = text.lowercased()
-        if let target = config.keywords[key] {
+        if key == "gmail" || key == "gmail web" {
+            openService("mail", web: true)
+        } else if let target = config.keywords[key] {
             openService(target)
         } else if config.service(key) != nil || key == "welcome" || key == "settings" {
             openService(key)
@@ -258,7 +283,6 @@ final class Session {
     }
 
     func paneUpdated(_ pane: WebPane) {
-        if pane.service?.id == "mail" { welcomePane?.setMailCount(pane.unread) }
         if pane === activeWebPane { refreshNav() }
     }
 

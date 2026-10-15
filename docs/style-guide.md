@@ -23,6 +23,15 @@ later.
 - Never pass a secret into `evaluateJavaScript` through string building. Use
   `callAsyncJavaScript` with arguments.
 
+## Mail
+
+- Protocol code lives in `Sources/AOLOS/Mail`. Network types are actors.
+- IMAP commands go through `MailService`, which runs one at a time per
+  connection.
+- Message HTML renders with JavaScript off and remote loads blocked by
+  `RemoteContentBlocker`.
+- Strip CR and LF from any user text that lands in a mail header.
+
 ## Comments and prose
 
 Follow [comments and prose](ai/comments-and-prose.md).

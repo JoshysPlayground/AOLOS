@@ -14,6 +14,11 @@ let package = Package(
                 .linkedFramework("LocalAuthentication"),
                 .linkedFramework("Security"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "AOLOSTests",
+            dependencies: ["AOLOS"],
+            path: "Tests/AOLOSTests"
+        ),
     ]
 )
