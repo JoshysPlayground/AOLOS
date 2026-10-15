@@ -274,6 +274,8 @@ final class RadioView: FlippedView, NSTableViewDataSource, NSTableViewDelegate {
         ImageLoader.load(track?.imageURL, into: art)
         playButton.kind = player?.isPlaying == true ? .pause : .play
         if let v = player?.device?.volume, volumeWork == nil { volume.integerValue = v }
+        volume.isEnabled = player?.device?.volume != nil
+        volume.toolTip = volume.isEnabled ? nil : "This device does not allow volume control"
 
         upNext.stringValue = spotify.queue.isEmpty ? "Nothing queued."
             : spotify.queue.prefix(8).enumerated().map { "\($0.offset + 1). \($0.element.name)\n    \($0.element.artistLine)" }
@@ -405,8 +407,8 @@ final class RadioView: FlippedView, NSTableViewDataSource, NSTableViewDelegate {
             }
             menu.addItem(.separator())
             if self.spotify.spotifyAppURL != nil {
-                menu.addItem(ActionItem("Start Spotify on This Mac") { [weak self] in
-                    Task { await self?.spotify.launchSpotifyApp() }
+                menu.addItem(ActionItem("Play on This Mac") { [weak self] in
+                    self?.perform { try await $0.playHere() }
                 })
             }
             menu.addItem(ActionItem("Refresh Stations") { [weak self] in

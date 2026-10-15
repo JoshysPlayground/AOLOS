@@ -135,6 +135,7 @@ final class SpotifyService {
     var onChange: (() -> Void)?
 
     private var pollTimer: Timer?
+    private(set) var preferredDeviceID: String?
     private var lastQueueTrack: String?
     static let spotifyAppID = "com.spotify.client"
 
@@ -240,7 +241,11 @@ final class SpotifyService {
             try await call("PUT", "/me/player/pause")
         } else {
             let device = try await ensureDevice()
-            try await call("PUT", "/me/player/play", query: ["device_id": device])
+            if player?.device?.id == device {
+                try await call("PUT", "/me/player/play", query: ["device_id": device])
+            } else {
+                try await call("PUT", "/me/player", body: ["device_ids": [device], "play": true])
+            }
         }
         refreshSoon()
     }
@@ -276,6 +281,7 @@ final class SpotifyService {
     }
 
     func transfer(to device: SpotifyDevice) async throws {
+        preferredDeviceID = device.id
         try await call("PUT", "/me/player", body: ["device_ids": [device.id], "play": player?.isPlaying ?? false])
         refreshSoon()
     }
@@ -291,25 +297,39 @@ final class SpotifyService {
         _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
-    /// Returns a device to play on, preferring the active one, then this Mac's Spotify app.
+    /// Returns the device to play on. A device picked in Radio Setup wins. Otherwise this Mac's
+    /// Spotify app is used, started hidden if needed, so sound never lands on another room's speaker by surprise.
     private func ensureDevice() async throws -> String {
-        if let active = player?.device { return active.id }
         try await loadDevices()
-        if let active = devices.first(where: \.isActive) ?? devices.first(where: { $0.type == "Computer" }) ?? devices.first {
-            return active.id
-        }
+        if let preferred = preferredDeviceID, devices.contains(where: { $0.id == preferred }) { return preferred }
+        if let local = localDevice { return local.id }
         guard spotifyAppURL != nil else {
+            if let active = devices.first(where: \.isActive) ?? devices.first { return active.id }
             throw SpotifyError.api(status: 404, message: "", reason: "NO_ACTIVE_DEVICE")
         }
         status = "Starting Spotify on this Mac..."
         onChange?()
         await launchSpotifyApp()
-        for _ in 0..<12 {
+        for _ in 0..<15 {
             try await Task.sleep(nanoseconds: 1_000_000_000)
             try await loadDevices()
-            if let device = devices.first(where: { $0.type == "Computer" }) ?? devices.first { return device.id }
+            if let local = localDevice { return local.id }
         }
         throw SpotifyError.api(status: 404, message: "", reason: "NO_ACTIVE_DEVICE")
+    }
+
+    /// The Spotify desktop app names its device after the computer.
+    var localDevice: SpotifyDevice? {
+        let name = Host.current().localizedName ?? ""
+        return devices.first { $0.type == "Computer" && $0.name == name }
+            ?? devices.first { $0.type == "Computer" }
+    }
+
+    func playHere() async throws {
+        preferredDeviceID = nil
+        let device = try await ensureDevice()
+        try await call("PUT", "/me/player", body: ["device_ids": [device], "play": true])
+        refreshSoon()
     }
 
     private func loadQueue() async throws {
