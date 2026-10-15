@@ -27,11 +27,14 @@ Command Q exits. Command H hides the app. Command Tab still switches apps.
 | Write | Native Write Mail window | SMTP |
 | IM | Slack | `https://app.slack.com/client` |
 | Chat | Discord | `https://discord.com/channels/@me` |
-| Music | YouTube Music or Spotify | `https://music.youtube.com`, `https://open.spotify.com` |
+| Music | AOL Radio for Spotify, or YouTube Music | Spotify Web API, `https://music.youtube.com` |
 | Finance | Your bank | Set on first use |
 
 Mail needs a one-time Google OAuth setup. See [docs/gmail.md](docs/gmail.md).
 The keyword `gmail` opens Gmail on the web instead.
+
+AOL Radio needs a Spotify app ID. See [docs/spotify.md](docs/spotify.md). The
+keyword `spotify web` opens the Spotify web player instead.
 
 Web services live in `~/Library/Application Support/AOL-OS/config.json`. Each
 service names a `profile`. Services with the same profile share cookies and

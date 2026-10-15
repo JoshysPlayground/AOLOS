@@ -10,6 +10,8 @@ enum SoundEvent: String, CaseIterable {
     case doorClose = "doorclose"
     case fileDone = "filedone"
     case mailSent = "mailsent"
+    case buddyIn = "buddyin"
+    case buddyOut = "buddyout"
     case notify
 
     /// macOS system sound used until the user drops in their own file.
@@ -24,6 +26,8 @@ enum SoundEvent: String, CaseIterable {
         case .doorClose: return "Frog"
         case .fileDone: return "Purr"
         case .mailSent: return "Blow"
+        case .buddyIn: return "Bottle"
+        case .buddyOut: return "Frog"
         case .notify: return "Ping"
         }
     }

@@ -20,6 +20,9 @@ final class Session {
     var mailboxWindow: MDIWindow?
     var mailboxView: MailboxView?
     var settingsView: SettingsView?
+    let spotify = SpotifyService()
+    var radioWindow: MDIWindow?
+    var radioView: RadioView?
 
     var desktop: DesktopView { shell.desktop }
     var activeWebPane: WebPane? { desktop.activeWindow?.content as? WebPane }
@@ -104,6 +107,7 @@ final class Session {
         guard signedOn else { return }
         SoundManager.shared.play(.goodbye)
         mail.stop()
+        spotify.stopPolling()
         desktop.closeAll(includingPinned: true)
         serviceWindows.removeAll()
         mailboxWindow = nil
@@ -138,9 +142,11 @@ final class Session {
     func openSettings() {
         guard signedOn else { return }
         if let w = settingsWindow, w.superview != nil { desktop.activate(w); return }
-        let view = SettingsView(config: config, auth: mail.auth)
+        let view = SettingsView(config: config, auth: mail.auth, spotify: spotify.auth)
         view.onConnectGmail = { [weak self] in self?.connectGmail() }
         view.onDisconnectGmail = { [weak self] in self?.disconnectGmail() }
+        view.onConnectSpotify = { [weak self] in self?.connectSpotify() }
+        view.onDisconnectSpotify = { [weak self] in self?.disconnectSpotify() }
         settingsView = view
         let window = MDIWindow(title: "Settings", icon: Icons.symbol("gearshape.fill", colors: [.white]), content: view)
         window.minSize = NSSize(width: 480, height: 330)
@@ -150,7 +156,12 @@ final class Session {
         }
         window.onClose = { [weak self] in self?.settingsWindow = nil; self?.settingsView = nil }
         settingsWindow = window
-        desktop.add(window, size: NSSize(width: 560, height: 470), centered: true)
+        desktop.add(window, size: NSSize(width: 580, height: 600), centered: true)
+    }
+
+    func updateConfig(_ change: (inout AOLConfig) -> Void) {
+        change(&config)
+        ConfigStore.save(config)
     }
 
     private func apply(_ newConfig: AOLConfig) {
@@ -168,6 +179,8 @@ final class Session {
         case "settings": openSettings(); return
         case "mail" where !web: openMailbox(minimized: minimized); return
         case "write" where !web: openCompose(); return
+        case "radio": openRadio(); return
+        case "spotify" where !web: openRadio(); return
         default: break
         }
         guard let service = config.service(id) else { go(id); return }
@@ -250,6 +263,10 @@ final class Session {
         let key = text.lowercased()
         if key == "gmail" || key == "gmail web" {
             openService("mail", web: true)
+        } else if key == "radio" || key == "aol radio" {
+            openRadio()
+        } else if key == "spotify web" {
+            openService("spotify", web: true)
         } else if let target = config.keywords[key] {
             openService(target)
         } else if config.service(key) != nil || key == "welcome" || key == "settings" {
@@ -366,8 +383,10 @@ final class Session {
         musicButton = toolbarButton("Music", "headphones", [red]) { [weak self] in
             guard let self else { return }
             let menu = NSMenu()
+            menu.addItem(ActionItem("AOL Radio") { [weak self] in self?.openRadio() })
+            menu.addItem(.separator())
             menu.addItem(ActionItem("YouTube Music") { [weak self] in self?.openService("ytmusic") })
-            menu.addItem(ActionItem("Spotify") { [weak self] in self?.openService("spotify") })
+            menu.addItem(ActionItem("Spotify Web Player") { [weak self] in self?.openService("spotify", web: true) })
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: musicButton.bounds.height), in: musicButton)
         }
 

@@ -215,7 +215,7 @@ extension Session {
             openSettings()
             let alert = NSAlert()
             alert.messageText = "Gmail needs a Google OAuth client"
-            alert.informativeText = "Paste the client ID and secret from your Google Cloud project into Settings, then click Connect Gmail. The steps are in docs/gmail.md."
+            alert.informativeText = "This build has no built-in client. Paste a client ID and secret into Settings, then click Connect Gmail. The steps are in docs/gmail.md."
             alert.runModal()
             return
         }

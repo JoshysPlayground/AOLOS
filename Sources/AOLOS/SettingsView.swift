@@ -4,8 +4,11 @@ final class SettingsView: FlippedView {
     var onSave: ((AOLConfig) -> Void)?
     var onConnectGmail: (() -> Void)?
     var onDisconnectGmail: (() -> Void)?
+    var onConnectSpotify: (() -> Void)?
+    var onDisconnectSpotify: (() -> Void)?
     private var config: AOLConfig
     private let auth: GoogleAuth
+    private let spotify: SpotifyAuth
 
     private let screenName = NSTextField()
     private let bankURL = NSTextField()
@@ -17,10 +20,15 @@ final class SettingsView: FlippedView {
     private let gmailStatus = NSTextField(labelWithString: "")
     private let connectButton = NSButton(title: "Connect Gmail", target: nil, action: nil)
     private let disconnectButton = NSButton(title: "Disconnect", target: nil, action: nil)
+    private let spotifyID = NSTextField()
+    private let spotifyStatus = NSTextField(labelWithString: "")
+    private let spotifyConnect = NSButton(title: "Connect Spotify", target: nil, action: nil)
+    private let spotifyDisconnect = NSButton(title: "Disconnect", target: nil, action: nil)
 
-    init(config: AOLConfig, auth: GoogleAuth) {
+    init(config: AOLConfig, auth: GoogleAuth, spotify: SpotifyAuth) {
         self.config = config
         self.auth = auth
+        self.spotify = spotify
         super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 440))
 
         screenName.stringValue = config.screenName
@@ -29,15 +37,24 @@ final class SettingsView: FlippedView {
         touchID.state = config.requireTouchID ? .on : .off
         sounds.state = config.soundsEnabled ? .on : .off
         checkMail.state = config.openAtSignOn.contains("mail") ? .on : .off
-        clientID.stringValue = auth.clientID ?? ""
-        clientID.placeholderString = "1234-abc.apps.googleusercontent.com"
-        clientSecret.placeholderString = auth.hasClientSecret ? "Saved in Keychain" : "Client secret"
+        clientID.stringValue = auth.overrideClientID ?? ""
+        clientID.placeholderString = GoogleClient.isConfigured ? "Built in. Leave blank." : "1234-abc.apps.googleusercontent.com"
         gmailStatus.font = Theme.ui(11)
         gmailStatus.textColor = Theme.mutedText
         connectButton.target = self
         connectButton.action = #selector(connectTapped)
         disconnectButton.target = self
         disconnectButton.action = #selector(disconnectTapped)
+        spotifyID.stringValue = spotify.overrideClientID ?? ""
+        spotifyID.placeholderString = SpotifyClient.isConfigured ? "Built in. Leave blank." : "Spotify client ID"
+        spotifyStatus.font = Theme.ui(11)
+        spotifyStatus.textColor = Theme.mutedText
+        spotifyConnect.target = self
+        spotifyConnect.action = #selector(spotifyConnectTapped)
+        spotifyDisconnect.target = self
+        spotifyDisconnect.action = #selector(spotifyDisconnectTapped)
+        let spotifyButtons = NSStackView(views: [spotifyConnect, spotifyDisconnect])
+        spotifyButtons.orientation = .horizontal
 
         let soundsFolder = NSButton(title: "Open Sounds Folder", target: self, action: #selector(openSounds))
         let configFile = NSButton(title: "Edit config.json", target: self, action: #selector(openConfig))
@@ -57,12 +74,16 @@ final class SettingsView: FlippedView {
             [label("Client Secret:"), clientSecret],
             [NSGridCell.emptyContentView, gmailButtons],
             [NSGridCell.emptyContentView, gmailStatus],
+            [label("Spotify App ID:"), spotifyID],
+            [NSGridCell.emptyContentView, spotifyButtons],
+            [NSGridCell.emptyContentView, spotifyStatus],
         ])
         form.rowSpacing = 10
         form.columnSpacing = 10
         form.column(at: 0).xPlacement = .trailing
         form.column(at: 1).width = 320
         form.row(at: 5).topPadding = 14
+        form.row(at: 9).topPadding = 14
 
         let buttons = NSStackView(views: [soundsFolder, configFile, NSView(), save])
         buttons.orientation = .horizontal
@@ -81,6 +102,7 @@ final class SettingsView: FlippedView {
             buttons.widthAnchor.constraint(equalTo: form.widthAnchor),
         ])
         refreshGmailStatus()
+        refreshSpotifyStatus()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -96,11 +118,37 @@ final class SettingsView: FlippedView {
         } else if auth.hasClient {
             gmailStatus.stringValue = "Not connected"
         } else {
-            gmailStatus.stringValue = "Create a Desktop OAuth client in Google Cloud. See docs/gmail.md."
+            gmailStatus.stringValue = "This build has no Google OAuth client. See docs/gmail.md."
         }
         disconnectButton.isEnabled = auth.isConnected
         connectButton.title = auth.isConnected ? "Reconnect" : "Connect Gmail"
-        clientSecret.placeholderString = auth.hasClientSecret ? "Saved in Keychain" : "Client secret"
+        if auth.overrideClientID != nil {
+            clientSecret.placeholderString = auth.hasOverrideSecret ? "Saved in Keychain" : "Client secret"
+        } else {
+            clientSecret.placeholderString = GoogleClient.isConfigured ? "Built in. Leave blank." : "Client secret"
+        }
+    }
+
+    func refreshSpotifyStatus() {
+        if spotify.isConnected {
+            spotifyStatus.stringValue = "Connected" + (spotify.userName.map { " as \($0)" } ?? "")
+        } else if spotify.clientID != nil {
+            spotifyStatus.stringValue = "Not connected"
+        } else {
+            spotifyStatus.stringValue = "This build has no Spotify app ID. See docs/spotify.md."
+        }
+        spotifyDisconnect.isEnabled = spotify.isConnected
+        spotifyConnect.title = spotify.isConnected ? "Reconnect" : "Connect Spotify"
+    }
+
+    @objc private func spotifyConnectTapped() {
+        if !spotifyID.stringValue.isEmpty || spotify.overrideClientID != nil { spotify.setClientID(spotifyID.stringValue) }
+        refreshSpotifyStatus()
+        onConnectSpotify?()
+    }
+
+    @objc private func spotifyDisconnectTapped() {
+        onDisconnectSpotify?()
     }
 
     private func label(_ text: String) -> NSTextField {
@@ -110,7 +158,9 @@ final class SettingsView: FlippedView {
     }
 
     @objc private func connectTapped() {
-        auth.setClient(id: clientID.stringValue, secret: clientSecret.stringValue)
+        if !clientID.stringValue.isEmpty || auth.overrideClientID != nil {
+            auth.setClient(id: clientID.stringValue, secret: clientSecret.stringValue)
+        }
         clientSecret.stringValue = ""
         refreshGmailStatus()
         onConnectGmail?()
@@ -140,9 +190,10 @@ final class SettingsView: FlippedView {
         config.soundsEnabled = sounds.state == .on
         config.openAtSignOn.removeAll { $0 == "mail" }
         if checkMail.state == .on { config.openAtSignOn.insert("mail", at: 0) }
-        if !clientID.stringValue.isEmpty || !clientSecret.stringValue.isEmpty {
+        if !clientID.stringValue.isEmpty || auth.overrideClientID != nil {
             auth.setClient(id: clientID.stringValue, secret: clientSecret.stringValue)
         }
+        if !spotifyID.stringValue.isEmpty || spotify.overrideClientID != nil { spotify.setClientID(spotifyID.stringValue) }
         onSave?(config)
     }
 }

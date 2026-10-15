@@ -212,7 +212,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         scroll.isHidden = !connected
         connectLabel.stringValue = mail.auth.hasClient
             ? "Gmail is not connected. Sign in with Google to read your mail here."
-            : "Gmail is not set up. Add your Google OAuth client ID and secret in Settings, then connect."
+            : "This build has no Google OAuth client. Add one in Settings, then connect."
 
         let count = rows.count
         let noun = box == .new ? "new" : (box == .old ? "old" : "sent")

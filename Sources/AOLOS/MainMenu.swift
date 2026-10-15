@@ -91,8 +91,9 @@ enum MainMenu {
                 m.addItem(ActionItem("Instant Message (Slack)") { session?.openService("im") })
             },
             item("Services") { [weak session] m in
+                m.addItem(ActionItem("AOL Radio") { session?.openRadio() })
                 m.addItem(ActionItem("YouTube Music") { session?.openService("ytmusic") })
-                m.addItem(ActionItem("Spotify") { session?.openService("spotify") })
+                m.addItem(ActionItem("Spotify Web Player") { session?.openService("spotify", web: true) })
                 m.addItem(ActionItem("Finance") { session?.openService("finance") })
             },
             item("Settings") { [weak session] m in

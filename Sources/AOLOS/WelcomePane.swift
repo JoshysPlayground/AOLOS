@@ -126,7 +126,7 @@ final class WelcomePane: FlippedView, WKNavigationDelegate {
                 <div class="tile" onclick="openId('im')"><div class="dot" style="background:#e3a400">IM</div>Instant Message</div>
                 <div class="tile" onclick="openId('chat')"><div class="dot" style="background:#5865f2">C</div>Chat</div>
                 <div class="tile" onclick="openId('ytmusic')"><div class="dot" style="background:#d62d2d">&#9835;</div>YouTube Music</div>
-                <div class="tile" onclick="openId('spotify')"><div class="dot" style="background:#1db954">S</div>Spotify</div>
+                <div class="tile" onclick="openId('radio')"><div class="dot" style="background:#1db954">R</div>AOL Radio</div>
                 <div class="tile" onclick="openId('finance')"><div class="dot" style="background:#2e8b57">$</div>Finance</div>
               </div>
             </div>

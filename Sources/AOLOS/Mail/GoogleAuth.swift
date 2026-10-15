@@ -92,24 +92,32 @@ final class GoogleAuth {
     private var expiry = Date.distantPast
     private var server: LoopbackServer?
 
-    var clientID: String? { Keychain.secret(Key.clientID) }
-    var hasClientSecret: Bool { Keychain.secret(Key.clientSecret) != nil }
-    var hasClient: Bool { clientID != nil && hasClientSecret }
+    /// A client saved in Settings wins over the built-in one.
+    var overrideClientID: String? { Keychain.secret(Key.clientID) }
+    var hasOverrideSecret: Bool { Keychain.secret(Key.clientSecret) != nil }
+    var clientID: String? { overrideClientID ?? (GoogleClient.isConfigured ? GoogleClient.id : nil) }
+    var clientSecret: String? {
+        overrideClientID != nil ? Keychain.secret(Key.clientSecret) : (GoogleClient.isConfigured ? GoogleClient.secret : nil)
+    }
+    var hasClient: Bool { clientID != nil && clientSecret != nil }
     var email: String? { Keychain.secret(Key.email) }
     var isConnected: Bool { email != nil && Keychain.secret(Key.refreshToken) != nil }
 
+    /// An empty ID clears the override and returns to the built-in client.
     func setClient(id: String, secret: String?) {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         Keychain.setSecret(Key.clientID, trimmed.isEmpty ? nil : trimmed)
-        if let secret, !secret.isEmpty {
+        if trimmed.isEmpty {
+            Keychain.setSecret(Key.clientSecret, nil)
+        } else if let secret, !secret.isEmpty {
             Keychain.setSecret(Key.clientSecret, secret.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
     /// Runs the browser sign in with PKCE and returns the signed-in address.
     func connect() async throws -> String {
-        guard let clientID, let secret = Keychain.secret(Key.clientSecret) else {
-            throw MailError.auth("Add your Google OAuth client ID and secret in Settings first.")
+        guard let clientID, let secret = clientSecret else {
+            throw MailError.auth("This build has no Google OAuth client. Add one in Settings.")
         }
         server?.stop()
         let server = try LoopbackServer()
@@ -145,7 +153,7 @@ final class GoogleAuth {
             throw MailError.auth("Google sign in returned an unexpected response.")
         }
 
-        let json = try await Self.postForm("https://oauth2.googleapis.com/token", [
+        let json = try await OAuthHTTP.postForm("https://oauth2.googleapis.com/token", [
             "code": code,
             "client_id": clientID,
             "client_secret": secret,
@@ -166,10 +174,10 @@ final class GoogleAuth {
 
     func token() async throws -> String {
         if let accessToken, expiry.timeIntervalSinceNow > 60 { return accessToken }
-        guard let clientID, let secret = Keychain.secret(Key.clientSecret),
+        guard let clientID, let secret = clientSecret,
               let refresh = Keychain.secret(Key.refreshToken) else { throw MailError.notConnected }
         do {
-            let json = try await Self.postForm("https://oauth2.googleapis.com/token", [
+            let json = try await OAuthHTTP.postForm("https://oauth2.googleapis.com/token", [
                 "client_id": clientID,
                 "client_secret": secret,
                 "refresh_token": refresh,
@@ -186,7 +194,7 @@ final class GoogleAuth {
 
     func disconnect() {
         if let refresh = Keychain.secret(Key.refreshToken) {
-            Task { _ = try? await Self.postForm("https://oauth2.googleapis.com/revoke", ["token": refresh]) }
+            Task { _ = try? await OAuthHTTP.postForm("https://oauth2.googleapis.com/revoke", ["token": refresh]) }
         }
         Keychain.setSecret(Key.refreshToken, nil)
         Keychain.setSecret(Key.email, nil)
@@ -227,7 +235,11 @@ final class GoogleAuth {
         return json["email"] as? String
     }
 
-    private static func postForm(_ url: String, _ fields: [String: String]) async throws -> [String: Any] {
+}
+
+@MainActor
+enum OAuthHTTP {
+    static func postForm(_ url: String, _ fields: [String: String]) async throws -> [String: Any] {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         let body = fields.map { key, value in
@@ -244,7 +256,7 @@ final class GoogleAuth {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             let error = json["error"] as? String ?? "unknown_error"
             let detail = json["error_description"] as? String ?? ""
-            throw MailError.auth("Google returned \(error). \(detail)")
+            throw MailError.auth("The sign in service returned \(error). \(detail)")
         }
         return json
     }
