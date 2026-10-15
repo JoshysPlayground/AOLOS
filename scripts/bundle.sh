@@ -10,7 +10,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Sounds" "$app/Contents/R
 cp .build/release/AOLOS "$app/Contents/MacOS/AOL-OS"
 cp Resources/Info.plist "$app/Contents/Info.plist"
 find Resources/Sounds -type f ! -name '.gitkeep' -exec cp {} "$app/Contents/Resources/Sounds/" \;
-find Resources/Branding -type f ! -name '.gitkeep' -exec cp {} "$app/Contents/Resources/Branding/" \;
+cp -R Resources/Branding/. "$app/Contents/Resources/Branding/"
+find "$app/Contents/Resources/Branding" -name '.gitkeep' -delete
 codesign --force --sign - "$app"
 
 echo "Built $app"

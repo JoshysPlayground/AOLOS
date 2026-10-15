@@ -1,32 +1,52 @@
 import AppKit
 
-/// Placeholder for a minimized MDI window, shown along the bottom of the desktop.
+/// A minimized child window: a short Luna title bar with restore and close, resting on the bottom edge.
 final class TrayChip: PressableView {
     weak var target: MDIWindow?
+    let restoreButton = CaptionButton(kind: .restore)
+    let closeButton = CaptionButton(kind: .close)
+    static let size = NSSize(width: 176, height: 26)
 
     init(target: MDIWindow) {
         self.target = target
         super.init(frame: .zero)
         toolTip = target.title
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerRadius = 7
+        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        closeButton.isHidden = !target.closable
+        addSubview(restoreButton)
+        addSubview(closeButton)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func layout() {
+        super.layout()
+        let s = bounds.height - 7
+        var x = bounds.width - s - 4
+        for button in [closeButton, restoreButton] where !button.isHidden {
+            button.frame = NSRect(x: x, y: 4, width: s, height: s)
+            x -= s + 2
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
         let colors = target?.attention == true ? Theme.titleAttention
             : (isHovered ? Theme.titleActive : Theme.titleInactive)
-        Theme.gradient(colors, in: path)
-        Theme.frameActive.setStroke()
-        path.stroke()
-        var x: CGFloat = 5
+        Theme.gradient(colors, in: bounds)
+        NSColor.white.withAlphaComponent(0.35).setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+        var x: CGFloat = 6
         if let icon = target?.icon {
-            icon.draw(in: NSRect(x: x, y: (bounds.height - 13) / 2, width: 13, height: 13),
+            icon.draw(in: NSRect(x: x, y: (bounds.height - 15) / 2, width: 15, height: 15),
                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            x += 18
+            x += 20
         }
-        drawText(target?.title ?? "", font: Theme.caption(11), color: .white,
-                 in: NSRect(x: x, y: 0, width: bounds.width - x - 6, height: bounds.height), shadow: true)
+        let buttons = CGFloat([restoreButton, closeButton].filter { !$0.isHidden }.count) * (bounds.height - 5)
+        drawText(target?.title ?? "", font: Theme.caption(12), color: .white,
+                 in: NSRect(x: x, y: 0, width: bounds.width - x - buttons - 8, height: bounds.height), shadow: true)
     }
 }
 
@@ -114,6 +134,10 @@ final class DesktopView: FlippedView {
         chip.action = { [weak self, weak w] in
             if let w { self?.restore(w) }
         }
+        chip.restoreButton.action = chip.action
+        chip.closeButton.action = { [weak self, weak w] in
+            if let w { self?.close(w) }
+        }
         chips[ObjectIdentifier(w)] = chip
         addSubview(chip)
         layoutChips()
@@ -190,11 +214,12 @@ final class DesktopView: FlippedView {
     }
 
     private func layoutChips() {
-        var x: CGFloat = 6
+        var x: CGFloat = 2
         for w in windows where w.isHidden {
             guard let chip = chips[ObjectIdentifier(w)] else { continue }
-            chip.frame = NSRect(x: x, y: bounds.height - 28, width: 170, height: 23)
-            x += 174
+            chip.frame = NSRect(x: x, y: bounds.height - TrayChip.size.height,
+                                width: TrayChip.size.width, height: TrayChip.size.height)
+            x += TrayChip.size.width + 2
         }
     }
 

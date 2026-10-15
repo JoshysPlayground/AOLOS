@@ -40,6 +40,9 @@ struct AOLConfig: Codable {
         soundsEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? d.soundsEnabled
         openAtSignOn = try c.decodeIfPresent([String].self, forKey: .openAtSignOn) ?? d.openAtSignOn
         services = try c.decodeIfPresent([ServiceDef].self, forKey: .services) ?? d.services
+        for service in d.services where !services.contains(where: { $0.id == service.id }) {
+            services.append(service)
+        }
         keywords = try c.decodeIfPresent([String: String].self, forKey: .keywords) ?? d.keywords
         neverSaveHosts = try c.decodeIfPresent([String].self, forKey: .neverSaveHosts) ?? d.neverSaveHosts
         radioPresets = try c.decodeIfPresent([RadioStation].self, forKey: .radioPresets) ?? d.radioPresets
@@ -72,6 +75,14 @@ struct AOLConfig: Codable {
                    profile: "spotify", icon: "headphones"),
         ServiceDef(id: "finance", title: "Finance", url: "",
                    profile: "bank", icon: "dollarsign.circle.fill", hooks: false, autofill: true),
+        ServiceDef(id: "photos", title: "Pictures", url: "https://photos.google.com",
+                   profile: "google", icon: "photo.on.rectangle"),
+        ServiceDef(id: "news", title: "Buzzline", url: "https://news.google.com",
+                   profile: "google", icon: "bubble.left.fill"),
+        ServiceDef(id: "calendar", title: "Remind Me", url: "https://calendar.google.com",
+                   profile: "google", icon: "calendar"),
+        ServiceDef(id: "movies", title: "Moviefone", url: "https://www.fandango.com",
+                   profile: "browser", icon: "popcorn.fill"),
     ]
 
     static let defaultKeywords: [String: String] = [

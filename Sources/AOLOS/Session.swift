@@ -82,12 +82,7 @@ final class Session {
     }
 
     private func refreshSafety() {
-        let aol = [
-            SafetyItem(label: "Touch ID Sign On", state: config.requireTouchID ? .on : .off),
-            SafetyItem(label: "Mail Image Blocking", state: .on),
-            SafetyItem(label: "Keychain Password Saving", state: .on),
-            SafetyItem(label: "Gmail Connection", state: mail.auth.isConnected ? .on : .unknown),
-        ]
+        let aol = aolSafetyItems()
         signOnView?.setSafety(aol: aol, mac: macSafetyCache)
         Task { [weak self] in
             let mac = await MacSafety.check()
@@ -413,38 +408,48 @@ final class Session {
         if let w = desktop.activeWindow, w.closable { desktop.close(w) }
     }
 
-    private func toolbarButton(_ title: String, _ symbol: String, _ colors: [NSColor], _ action: @escaping () -> Void) -> ToolbarButton {
-        ToolbarButton(title: title, symbol: symbol, colors: colors, action: action)
-    }
-
     private func buildChrome() {
         let blue = Theme.rgb(33, 96, 200), gold = Theme.rgb(232, 168, 0), green = Theme.rgb(40, 140, 70)
-        let red = Theme.rgb(200, 50, 40), purple = Theme.rgb(88, 101, 242), gray = Theme.rgb(110, 110, 110)
-
-        var musicButton: ToolbarButton!
-        musicButton = toolbarButton("Music", "headphones", [red]) { [weak self] in
-            guard let self else { return }
-            let menu = NSMenu()
-            menu.addItem(ActionItem("AOL Radio") { [weak self] in self?.openRadio() })
-            menu.addItem(.separator())
-            menu.addItem(ActionItem("YouTube Music") { [weak self] in self?.openService("ytmusic") })
-            menu.addItem(ActionItem("Spotify Web Player") { [weak self] in self?.openService("spotify", web: true) })
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: musicButton.bounds.height), in: musicButton)
+        let red = Theme.rgb(200, 50, 40), purple = Theme.rgb(120, 70, 200)
+        func button(_ title: String, _ name: String, _ symbol: String, _ color: NSColor,
+                    _ action: @escaping (ToolbarButton) -> Void) -> ToolbarButton {
+            let b = ToolbarButton(title: title, name: name, symbol: symbol, colors: [color])
+            b.action = { [weak b] in if let b { action(b) } }
+            return b
         }
 
         shell.toolbar.leftItems = [
-            toolbarButton("Read", "envelope.fill", [blue]) { [weak self] in self?.openService("mail") },
-            toolbarButton("Write", "square.and.pencil", [blue]) { [weak self] in self?.openService("write") },
-            toolbarButton("IM", "figure.wave", [gold]) { [weak self] in self?.openService("im") },
-            toolbarButton("Chat", "bubble.left.and.bubble.right.fill", [purple]) { [weak self] in self?.openService("chat") },
-            musicButton,
-            toolbarButton("Finance", "dollarsign.circle.fill", [.white, green]) { [weak self] in self?.openService("finance") },
-            toolbarButton("Settings", "gearshape.fill", [gray]) { [weak self] in self?.openSettings() },
+            button("Read", "read-closed", "envelope.fill", blue) { [weak self] _ in self?.openService("mail") },
+            button("Write", "write", "square.and.pencil", blue) { [weak self] _ in self?.openService("write") },
+            button("IM", "im", "figure.run", gold) { [weak self] _ in self?.openService("im") },
+            button("People", "people", "person.2.fill", blue) { [weak self] _ in self?.openService("chat") },
+            button("Safety", "safety", "shield.lefthalf.filled", blue) { [weak self] _ in self?.openSafety() },
+            button("Settings", "settings", "checkmark.square.fill", gold) { [weak self] _ in self?.openSettings() },
+            button("Music", "music", "headphones", purple) { [weak self] b in
+                let menu = NSMenu()
+                menu.addItem(ActionItem("AOL Radio") { [weak self] in self?.openRadio() })
+                menu.addItem(.separator())
+                menu.addItem(ActionItem("YouTube Music") { [weak self] in self?.openService("ytmusic") })
+                menu.addItem(ActionItem("Spotify Web Player") { [weak self] in self?.openService("spotify", web: true) })
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+            },
+            button("Finance", "finance", "dollarsign.circle.fill", green) { [weak self] _ in self?.openService("finance") },
         ]
-        shell.toolbar.rightItems = [
-            toolbarButton("Keyword", "key.fill", [gold]) { [weak self] in self?.promptKeyword() },
-            toolbarButton("Sign Off", "door.left.hand.open", [blue]) { [weak self] in self?.signOff() },
+        let expressions = button("Expressions", "expressions", "paintpalette.fill", gold) { _ in }
+        let greetings = button("Greetings", "greetings", "heart.text.square.fill", blue) { _ in }
+        for unavailable in [expressions, greetings] {
+            unavailable.available = false
+            unavailable.toolTip = "Not available yet"
+        }
+        shell.toolbar.groupItems = [
+            button("Pictures", "pictures", "photo.on.rectangle", blue) { [weak self] _ in self?.openService("photos") },
+            expressions,
+            button("Buzzline", "buzzline", "bubble.left.fill", gold) { [weak self] _ in self?.openService("news") },
+            button("Remind Me", "remindme", "hand.point.up.fill", red) { [weak self] _ in self?.openService("calendar") },
+            greetings,
+            button("Moviefone", "moviefone", "popcorn.fill", red) { [weak self] _ in self?.openService("movies") },
         ]
+        shell.toolbar.customize.action = { [weak self] in self?.openSettings() }
 
         let nav = shell.navBar
         nav.welcome.action = { [weak self] in self?.openWelcome() }

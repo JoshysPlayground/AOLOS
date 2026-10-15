@@ -143,37 +143,64 @@ final class ChromeButton: PressableView {
     }
 }
 
-/// Large icon-over-label toolbar button in the AOL 9 style.
+/// Icon-over-label toolbar button. Uses Branding/Toolbar/<name>-active.png and -inactive.png when present,
+/// and a tinted SF Symbol otherwise.
 final class ToolbarButton: PressableView {
     let title: String
-    let image: NSImage?
+    var name: String { didSet { loadImages() } }
+    var available = true { didSet { needsDisplay = true } }
+    private let symbol: String
+    private let colors: [NSColor]
+    private var activeImage: NSImage?
+    private var inactiveImage: NSImage?
 
-    init(title: String, symbol: String, colors: [NSColor], action: (() -> Void)? = nil) {
+    init(title: String, name: String, symbol: String, colors: [NSColor], action: (() -> Void)? = nil) {
         self.title = title
-        self.image = Icons.symbol(symbol, size: 22, colors: colors)
+        self.name = name
+        self.symbol = symbol
+        self.colors = colors
         super.init(frame: .zero)
         self.action = action
+        loadImages()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    private var isLive: Bool { isEnabled && available }
+
+    private func loadImages() {
+        activeImage = AppPaths.brandingImage("Toolbar/\(name)-active.png") ?? Icons.symbol(symbol, size: 22, colors: colors)
+        inactiveImage = AppPaths.brandingImage("Toolbar/\(name)-inactive.png")
+            ?? Icons.symbol(symbol, size: 22, colors: [Theme.rgb(160, 160, 160)])
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isLive else { return }
+        super.mouseDown(with: event)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        if isEnabled && (isHovered || isPressed) {
+        if isLive && (isHovered || isPressed) {
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 4, yRadius: 4)
-            Theme.gradient(isPressed ? [Theme.rgb(220, 214, 192), Theme.rgb(240, 236, 222)]
-                                     : [Theme.rgb(255, 255, 255), Theme.rgb(236, 232, 214)], in: path)
-            Theme.chromeShade.setStroke()
+            Theme.gradient(isPressed ? [Theme.rgb(196, 216, 242), Theme.rgb(226, 238, 252)]
+                                     : [Theme.rgb(255, 255, 255), Theme.rgb(220, 234, 252)], in: path)
+            Theme.toolbarLine.setStroke()
             path.stroke()
         }
-        let alpha: CGFloat = isEnabled ? 1 : 0.35
-        if let image {
-            let size = image.size
-            let rect = NSRect(x: bounds.midX - size.width / 2, y: 8 + (24 - size.height) / 2,
-                              width: size.width, height: size.height)
-            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+        if let image = isLive ? activeImage : inactiveImage {
+            let side: CGFloat = min(32, bounds.height - 20)
+            let rect = NSRect(x: bounds.midX - side / 2, y: 3, width: side, height: side)
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
+                       hints: [.interpolation: NSImageInterpolation.high])
         }
-        drawText(title, font: Theme.ui(11), color: Theme.text.withAlphaComponent(alpha),
-                 in: NSRect(x: 0, y: bounds.height - 20, width: bounds.width, height: 16), align: .center)
+        drawText(title, font: Theme.ui(10.5, bold: true),
+                 color: isLive ? Theme.rgb(24, 40, 96) : Theme.rgb(150, 156, 170),
+                 in: NSRect(x: 0, y: bounds.height - 16, width: bounds.width, height: 14), align: .center)
     }
 }
 

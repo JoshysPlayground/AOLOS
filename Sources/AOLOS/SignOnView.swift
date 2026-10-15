@@ -42,6 +42,53 @@ enum MacSafety {
     }
 }
 
+/// The two-column Safety panel shared by the Sign On window and the Safety window.
+@MainActor
+enum SafetyTable {
+    static func draw(in rect: NSRect, aol aolSafety: [SafetyItem], mac macSafety: [SafetyItem]) {
+        let box = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        NSColor.white.withAlphaComponent(0.75).setFill()
+        box.fill()
+        Theme.rgb(150, 180, 214).setStroke()
+        box.stroke()
+        let header = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 22)
+        NSGraphicsContext.saveGraphicsState()
+        box.addClip()
+        Theme.gradient([Theme.rgb(248, 251, 255), Theme.rgb(222, 234, 248)], in: header)
+        NSGraphicsContext.restoreGraphicsState()
+        Theme.rgb(150, 180, 214).setFill()
+        NSRect(x: rect.minX, y: header.maxY, width: rect.width, height: 1).fill()
+        NSRect(x: rect.midX, y: rect.minY, width: 1, height: rect.height).fill()
+
+        for (i, (title, items)) in [("Safety on AOL-OS", aolSafety), ("Safety on My Mac", macSafety)].enumerated() {
+            let colX = rect.minX + CGFloat(i) * rect.width / 2
+            if let shield = Icons.symbol("shield.lefthalf.filled", size: 11, colors: [Theme.mutedText]) {
+                shield.draw(in: NSRect(x: colX + 8, y: 5, width: 12, height: 13).offsetBy(dx: 0, dy: rect.minY),
+                            from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            }
+            drawText(title, font: Theme.ui(11, bold: true), color: Theme.text,
+                     in: NSRect(x: colX + 24, y: rect.minY, width: rect.width / 2 - 30, height: 22))
+            for (row, item) in items.prefix(4).enumerated() {
+                let y = header.maxY + 4 + CGFloat(row) * 17
+                drawText(item.label, font: Theme.ui(10), color: Theme.text,
+                         in: NSRect(x: colX + 24, y: y, width: rect.width / 2 - 120, height: 15))
+                let (text, color) = Self.badge(item.state)
+                drawText(text, font: Theme.ui(10, bold: true), color: color,
+                         in: NSRect(x: colX + rect.width / 2 - 96, y: y, width: 90, height: 15))
+            }
+        }
+    }
+
+    static func badge(_ state: SafetyItem.State) -> (String, NSColor) {
+        switch state {
+        case .on: return ("ON", Theme.rgb(30, 150, 30))
+        case .off: return ("Not Running", Theme.rgb(210, 20, 20))
+        case .notDetected: return ("Not Detected", Theme.rgb(210, 20, 20))
+        case .unknown: return ("--", Theme.mutedText)
+        }
+    }
+}
+
 /// Fully rounded gradient button, like Sign On and Sign On Options.
 final class PillButton: PressableView {
     enum Style { case blue, green }
@@ -284,46 +331,7 @@ final class SignOnView: FlippedView {
     }
 
     private func drawSafety(in rect: NSRect) {
-        let box = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        NSColor.white.withAlphaComponent(0.75).setFill()
-        box.fill()
-        Theme.rgb(150, 180, 214).setStroke()
-        box.stroke()
-        let header = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 22)
-        NSGraphicsContext.saveGraphicsState()
-        box.addClip()
-        Theme.gradient([Theme.rgb(248, 251, 255), Theme.rgb(222, 234, 248)], in: header)
-        NSGraphicsContext.restoreGraphicsState()
-        Theme.rgb(150, 180, 214).setFill()
-        NSRect(x: rect.minX, y: header.maxY, width: rect.width, height: 1).fill()
-        NSRect(x: rect.midX, y: rect.minY, width: 1, height: rect.height).fill()
-
-        for (i, (title, items)) in [("Safety on AOL-OS", aolSafety), ("Safety on My Mac", macSafety)].enumerated() {
-            let colX = rect.minX + CGFloat(i) * rect.width / 2
-            if let shield = Icons.symbol("shield.lefthalf.filled", size: 11, colors: [Theme.mutedText]) {
-                shield.draw(in: NSRect(x: colX + 8, y: 5, width: 12, height: 13).offsetBy(dx: 0, dy: rect.minY),
-                            from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            }
-            drawText(title, font: Theme.ui(11, bold: true), color: Theme.text,
-                     in: NSRect(x: colX + 24, y: rect.minY, width: rect.width / 2 - 30, height: 22))
-            for (row, item) in items.prefix(4).enumerated() {
-                let y = header.maxY + 4 + CGFloat(row) * 17
-                drawText(item.label, font: Theme.ui(10), color: Theme.text,
-                         in: NSRect(x: colX + 24, y: y, width: rect.width / 2 - 120, height: 15))
-                let (text, color) = Self.badge(item.state)
-                drawText(text, font: Theme.ui(10, bold: true), color: color,
-                         in: NSRect(x: colX + rect.width / 2 - 96, y: y, width: 90, height: 15))
-            }
-        }
-    }
-
-    private static func badge(_ state: SafetyItem.State) -> (String, NSColor) {
-        switch state {
-        case .on: return ("ON", Theme.rgb(30, 150, 30))
-        case .off: return ("Not Running", Theme.rgb(210, 20, 20))
-        case .notDetected: return ("Not Detected", Theme.rgb(210, 20, 20))
-        case .unknown: return ("--", Theme.mutedText)
-        }
+        SafetyTable.draw(in: rect, aol: aolSafety, mac: macSafety)
     }
 
     func setSafety(aol: [SafetyItem], mac: [SafetyItem]) {

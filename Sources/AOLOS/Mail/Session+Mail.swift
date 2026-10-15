@@ -6,6 +6,7 @@ extension Session {
     func setUpMail() {
         RemoteContentBlocker.prepare()
         mail.onChange = { [weak self] in
+            self?.updateReadIcon()
             self?.mailboxView?.reload()
             self?.updateWelcomeMail()
             self?.settingsView?.refreshGmailStatus()
@@ -15,6 +16,11 @@ extension Session {
             if let w = self?.mailboxWindow, !w.isActive { w.attention = true }
             self?.desktop.windowsChanged()
         }
+    }
+
+    /// The Read button shows the flag-up mailbox while unread mail is waiting.
+    func updateReadIcon() {
+        shell.toolbar.leftItems.first?.name = mail.unreadCount > 0 ? "read" : "read-closed"
     }
 
     func updateWelcomeMail() {

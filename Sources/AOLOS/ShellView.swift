@@ -84,32 +84,86 @@ final class MenuRow: FlippedView {
     }
 }
 
+/// The AOL 9 toolbar: main buttons on the left, a framed scrolling group on the right, then the logo.
 final class ToolbarView: FlippedView {
-    var leftItems: [NSView] = [] { didSet { oldValue.forEach { $0.removeFromSuperview() }; leftItems.forEach(addSubview); needsLayout = true } }
-    var rightItems: [NSView] = [] { didSet { oldValue.forEach { $0.removeFromSuperview() }; rightItems.forEach(addSubview); needsLayout = true } }
-    static let itemWidth: CGFloat = 66
+    var leftItems: [ToolbarButton] = [] { didSet { replace(oldValue, with: leftItems) } }
+    var groupItems: [ToolbarButton] = [] { didSet { replace(oldValue, with: groupItems) } }
+    let scrollLeft = ChromeButton(symbol: "chevron.left.2")
+    let scrollRight = ChromeButton(symbol: "chevron.right.2")
+    let customize = ChromeButton(symbol: "checkmark.square")
+    private var firstGroupItem = 0
+    private var groupRect = NSRect.zero
+    static let itemWidth: CGFloat = 64
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        [scrollLeft, scrollRight, customize].forEach(addSubview)
+        scrollLeft.action = { [weak self] in self?.scroll(-1) }
+        scrollRight.action = { [weak self] in self?.scroll(1) }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func replace(_ old: [ToolbarButton], with new: [ToolbarButton]) {
+        old.forEach { $0.removeFromSuperview() }
+        new.forEach(addSubview)
+        needsLayout = true
+    }
+
+    private func scroll(_ delta: Int) {
+        firstGroupItem = max(0, min(groupItems.count - 1, firstGroupItem + delta))
+        needsLayout = true
+    }
+
+    private var logoRect: NSRect {
+        NSRect(x: bounds.width - 46, y: (bounds.height - 38) / 2, width: 38, height: 38)
+    }
 
     override func layout() {
         super.layout()
+        let h = bounds.height - 6
         var x: CGFloat = 6
         for item in leftItems {
-            item.frame = NSRect(x: x, y: 3, width: Self.itemWidth, height: bounds.height - 6)
+            item.frame = NSRect(x: x, y: 3, width: Self.itemWidth, height: h)
             x += Self.itemWidth
         }
-        x = bounds.width - 6
-        for item in rightItems.reversed() {
-            x -= Self.itemWidth
-            item.frame = NSRect(x: x, y: 3, width: Self.itemWidth, height: bounds.height - 6)
+
+        groupRect = NSRect(x: x + 14, y: 3, width: max(0, logoRect.minX - 10 - x - 14), height: h)
+        let arrowW: CGFloat = 22
+        scrollLeft.frame = NSRect(x: groupRect.minX + 4, y: groupRect.minY + 4, width: arrowW, height: 18)
+        scrollRight.frame = NSRect(x: groupRect.maxX - arrowW - 4, y: groupRect.minY + 4, width: arrowW, height: 18)
+        customize.frame = NSRect(x: groupRect.maxX - arrowW - 4, y: groupRect.maxY - 22, width: arrowW, height: 18)
+
+        let inner = groupRect.insetBy(dx: arrowW + 8, dy: 0)
+        let fits = max(1, Int(inner.width / Self.itemWidth))
+        if groupItems.count <= fits { firstGroupItem = 0 }
+        firstGroupItem = min(firstGroupItem, max(0, groupItems.count - fits))
+        let shown = min(fits, groupItems.count - firstGroupItem)
+        let spacing = shown > 0 ? (inner.width - CGFloat(shown) * Self.itemWidth) / CGFloat(shown + 1) : 0
+        var gx = inner.minX + spacing
+        for (i, item) in groupItems.enumerated() {
+            let visible = i >= firstGroupItem && i < firstGroupItem + shown
+            item.isHidden = !visible
+            guard visible else { continue }
+            item.frame = NSRect(x: gx, y: 3, width: Self.itemWidth, height: h)
+            gx += Self.itemWidth + spacing
         }
+        scrollLeft.isEnabled = firstGroupItem > 0
+        scrollRight.isEnabled = firstGroupItem + shown < groupItems.count
     }
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.gradient(Theme.toolbar, in: bounds)
-        if let last = leftItems.last {
-            let groupRect = NSRect(x: 3, y: 2, width: last.frame.maxX - 1, height: bounds.height - 4)
-            let path = NSBezierPath(roundedRect: groupRect, xRadius: 6, yRadius: 6)
-            Theme.toolbarLine.withAlphaComponent(0.6).setStroke()
+        if groupRect.width > 0 {
+            let path = NSBezierPath(roundedRect: groupRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+            Theme.gradient([Theme.rgb(236, 244, 253), Theme.rgb(206, 224, 246)], in: path)
+            Theme.toolbarLine.setStroke()
+            path.lineWidth = 1
             path.stroke()
+        }
+        if let logo = Icons.brand {
+            logo.draw(in: logoRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
+                      hints: [.interpolation: NSImageInterpolation.high])
         }
         Theme.toolbarLine.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
@@ -211,7 +265,7 @@ final class ShellView: FlippedView {
         var y = b
         titleBar.frame = NSRect(x: b, y: y, width: w, height: 30); y += 30
         menuRow.frame = NSRect(x: b, y: y, width: w, height: 22); y += 22
-        toolbar.frame = NSRect(x: b, y: y, width: w, height: 62); y += 62
+        toolbar.frame = NSRect(x: b, y: y, width: w, height: 58); y += 58
         navBar.frame = NSRect(x: b, y: y, width: w, height: 30); y += 30
         let statusHeight: CGFloat = 22
         statusBar.frame = NSRect(x: b, y: bounds.height - b - statusHeight, width: w, height: statusHeight)
@@ -224,9 +278,11 @@ final class ShellView: FlippedView {
     }
 
     func setSignedOn(_ signedOn: Bool) {
-        for case let item as PressableView in toolbar.leftItems + toolbar.rightItems {
+        for item in toolbar.leftItems + toolbar.groupItems {
             item.isEnabled = signedOn
         }
+        [toolbar.scrollLeft, toolbar.scrollRight, toolbar.customize].forEach { $0.isEnabled = signedOn }
+        toolbar.needsLayout = true
         [navBar.welcome, navBar.back, navBar.forward, navBar.reload, navBar.go, navBar.search].forEach { $0.isEnabled = signedOn }
         navBar.address.isEnabled = signedOn
     }

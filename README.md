@@ -67,7 +67,14 @@ Branding images live in the same two places as sounds. Git ignores them.
 | File | Used for | Without it |
 | --- | --- | --- |
 | `Branding/signon-logo.png` | Sign On window logo | A plain AOL-OS wordmark |
-| `Branding/titlebar-icon.png` | Title bar, Sign On window and Dock icon | A white triangle |
+| `Branding/titlebar-icon.png` | Title bar, Sign On window, toolbar logo and Dock icon | A white triangle |
+| `Branding/Toolbar/<name>-active.png` and `-inactive.png` | Toolbar buttons | Tinted system symbols |
+
+Toolbar names are `read`, `read-closed`, `write`, `im`, `people`, `safety`,
+`settings`, `music`, `finance`, `pictures`, `expressions`, `buzzline`,
+`remindme`, `greetings` and `moviefone`. Buttons show the inactive image while
+signed off. Read shows `read` while unread mail is waiting and `read-closed`
+otherwise.
 
 ## Notifications
 
