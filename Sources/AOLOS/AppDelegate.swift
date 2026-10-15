@@ -18,9 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if windowed {
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
             window.title = "AOL-OS"
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                window.standardWindowButton(kind)?.isHidden = true
+            }
             window.minSize = NSSize(width: 900, height: 600)
             window.center()
         } else {
@@ -36,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = shell
         session = Session(shell: shell)
         NSApp.mainMenu = MainMenu.build(session: session)
+        if windowed { wireWindowControls(shell.titleBar) }
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -52,6 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyKioskOptions() {
         guard !windowed else { return }
         NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+    }
+
+    /// Luna buttons drive the real window, since the macOS buttons are hidden.
+    private func wireWindowControls(_ bar: AppTitleBar) {
+        bar.maxButton.isHidden = false
+        bar.minButton.action = { [weak self] in self?.window.miniaturize(nil) }
+        bar.maxButton.action = { [weak self] in self?.window.zoom(nil) }
+        bar.onDoubleClick = { [weak self] in self?.window.zoom(nil) }
+        bar.needsLayout = true
     }
 
     @objc private func screenChanged() {

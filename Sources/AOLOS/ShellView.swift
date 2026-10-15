@@ -1,27 +1,55 @@
 import AppKit
 
+/// The Luna title bar. In a window it replaces the macOS title bar, which is made transparent behind it.
 final class AppTitleBar: FlippedView {
     let minButton = CaptionButton(kind: .minimize)
+    let maxButton = CaptionButton(kind: .maximize)
     let closeButton = CaptionButton(kind: .close)
     var title = "AOL-OS 9.0 Optimized SE" { didSet { needsDisplay = true } }
+    var onDoubleClick: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         addSubview(minButton)
+        addSubview(maxButton)
         addSubview(closeButton)
+        maxButton.isHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self)
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: window)
+        }
+    }
+
+    @objc private func keyChanged() { needsDisplay = true }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onDoubleClick?()
+        } else {
+            window?.performDrag(with: event)
+        }
+    }
+
     override func layout() {
         super.layout()
-        let s = bounds.height - 5
-        closeButton.frame = NSRect(x: bounds.width - s - 4, y: 2.5, width: s, height: s)
-        minButton.frame = NSRect(x: closeButton.frame.minX - s - 2, y: 2.5, width: s, height: s)
+        let s = bounds.height - 6
+        var x = bounds.width - s - 5
+        for button in [closeButton, maxButton, minButton] where !button.isHidden {
+            button.frame = NSRect(x: x, y: 3, width: s, height: s)
+            x -= s + 2
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.gradient(Theme.titleActive, in: bounds)
+        Theme.gradient(window?.isKeyWindow == false ? Theme.titleInactive : Theme.titleActive, in: bounds)
         if let icon = Icons.symbol("triangle.fill", size: 12, colors: [.white]) {
             icon.draw(in: NSRect(x: 7, y: (bounds.height - 14) / 2, width: 14, height: 14),
                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
@@ -181,7 +209,7 @@ final class ShellView: FlippedView {
         let b: CGFloat = framed ? 3 : 0
         let w = bounds.width - 2 * b
         var y = b
-        titleBar.frame = NSRect(x: b, y: y, width: w, height: 28); y += 28
+        titleBar.frame = NSRect(x: b, y: y, width: w, height: 30); y += 30
         menuRow.frame = NSRect(x: b, y: y, width: w, height: 22); y += 22
         toolbar.frame = NSRect(x: b, y: y, width: w, height: 62); y += 62
         navBar.frame = NSRect(x: b, y: y, width: w, height: 30); y += 30
