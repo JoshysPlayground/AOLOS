@@ -31,32 +31,37 @@ final class BuddyTreeView: FlippedView {
 
     var onOpen: ((Buddy) -> Void)?
     var onMenu: ((Buddy, NSEvent, NSView) -> Void)?
+    var onGroupMenu: ((NSEvent, NSView) -> Void)?
     var recentChange: ((String) -> BuddyChange?)?
     private(set) var rows: [Row] = []
     private(set) var selectedID: String?
-    private var collapsed: Set<Int> = [1]
+    private var collapsed: Set<Int> = [2]
     private var buddies: [Buddy] = []
+    private var recentBuddies: [Buddy] = []
     static let rowHeight: CGFloat = 19
 
     var selected: Buddy? {
         guard let selectedID else { return nil }
-        return buddies.first { $0.id == selectedID }
+        return buddies.first { $0.id == selectedID } ?? recentBuddies.first { $0.id == selectedID }
     }
 
     override var acceptsFirstResponder: Bool { true }
 
-    func show(_ buddies: [Buddy]) {
+    func show(_ buddies: [Buddy], recent: [Buddy]) {
         self.buddies = buddies
+        recentBuddies = recent
         rebuild()
     }
 
     private func rebuild() {
         let online = buddies.filter { $0.isOnline || recentChange?($0.id) == .signedOff }
         let offline = buddies.filter { !$0.isOnline && recentChange?($0.id) != .signedOff }
-        rows = [.group("Buddies (\(buddies.filter(\.isOnline).count)/\(buddies.count))", 0)]
-        if !collapsed.contains(0) { rows += online.map(Row.buddy) }
-        rows.append(.group("Offline (\(offline.count))", 1))
-        if !collapsed.contains(1) { rows += offline.map(Row.buddy) }
+        rows = [.group("Recent Buddies (\(recentBuddies.filter(\.isOnline).count)/\(recentBuddies.count))", 0)]
+        if !collapsed.contains(0) { rows += recentBuddies.map(Row.buddy) }
+        rows.append(.group("Buddies (\(buddies.filter(\.isOnline).count)/\(buddies.count))", 1))
+        if !collapsed.contains(1) { rows += online.map(Row.buddy) }
+        rows.append(.group("Offline (\(offline.count))", 2))
+        if !collapsed.contains(2) { rows += offline.map(Row.buddy) }
         let height = max(CGFloat(rows.count) * Self.rowHeight + 6, enclosingScrollView?.contentSize.height ?? 0)
         setFrameSize(NSSize(width: enclosingScrollView?.contentSize.width ?? bounds.width, height: height))
         needsDisplay = true
@@ -166,7 +171,10 @@ final class BuddyTreeView: FlippedView {
 
     override func rightMouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        guard let i = row(at: p), case .buddy(let buddy) = rows[i] else { return }
+        guard let i = row(at: p), case .buddy(let buddy) = rows[i] else {
+            onGroupMenu?(event, self)
+            return
+        }
         selectedID = buddy.id
         needsDisplay = true
         onMenu?(buddy, event, self)
@@ -195,6 +203,10 @@ final class BuddyListView: FlippedView {
     var onOpen: ((Buddy) -> Void)?
     var onInfo: ((Buddy) -> Void)?
     var onConnect: (() -> Void)?
+    var onHide: ((Buddy) -> Void)?
+    var onUnhide: ((String) -> Void)?
+    /// Hidden buddy IDs with the name to show for each.
+    var hiddenBuddies: [(id: String, name: String)] = []
 
     let tree = BuddyTreeView()
     private let scroll = NSScrollView()
@@ -235,6 +247,15 @@ final class BuddyListView: FlippedView {
             let menu = NSMenu()
             menu.addItem(ActionItem("Send Instant Message") { self?.onOpen?(buddy) })
             menu.addItem(ActionItem("Open in Discord") { self?.onInfo?(buddy) })
+            menu.addItem(.separator())
+            menu.addItem(ActionItem("Hide from Buddy List") { self?.onHide?(buddy) })
+            if let hidden = self?.hiddenMenuItem() { menu.addItem(hidden) }
+            NSMenu.popUpContextMenu(menu, with: event, for: view)
+        }
+        tree.onGroupMenu = { [weak self] event, view in
+            guard let item = self?.hiddenMenuItem() else { return }
+            let menu = NSMenu()
+            menu.addItem(item)
             NSMenu.popUpContextMenu(menu, with: event, for: view)
         }
         [header, scroll, statusLabel, connect, buttons].forEach(addSubview)
@@ -251,17 +272,29 @@ final class BuddyListView: FlippedView {
         statusLabel.frame = NSRect(x: 12, y: header.frame.maxY + 30, width: bounds.width - 24, height: 64)
         connect.frame = NSRect(x: (bounds.width - connect.preferredWidth) / 2, y: statusLabel.frame.maxY + 6,
                                width: connect.preferredWidth, height: 24)
-        tree.show(lastBuddies)
+        tree.show(lastBuddies, recent: lastRecent)
     }
 
     private var lastBuddies: [Buddy] = []
+    private var lastRecent: [Buddy] = []
+
+    private func hiddenMenuItem() -> NSMenuItem? {
+        guard !hiddenBuddies.isEmpty else { return nil }
+        let item = NSMenuItem(title: "Show Hidden Buddy", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for hidden in hiddenBuddies.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
+            submenu.addItem(ActionItem(hidden.name) { [weak self] in self?.onUnhide?(hidden.id) })
+        }
+        item.submenu = submenu
+        return item
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.white.setFill()
         bounds.fill()
     }
 
-    func reload(_ bridge: DiscordBridge) {
+    func reload(_ bridge: DiscordBridge, hidden: Set<String>) {
         tree.recentChange = { [weak bridge] id in bridge?.recentChange(for: id) }
         meLabel.stringValue = bridge.me?.name ?? "Buddy List"
         meAvatar = bridge.me?.avatar
@@ -279,8 +312,10 @@ final class BuddyListView: FlippedView {
         scroll.isHidden = message != nil
         imButton.isEnabled = bridge.state == .ready
         infoButton.isEnabled = bridge.state == .ready
-        lastBuddies = bridge.sortedBuddies
-        tree.show(lastBuddies)
+        lastBuddies = bridge.sortedBuddies.filter { !hidden.contains($0.id) }
+        lastRecent = RecentBuddies.pick(bridge.recentBuddies, hidden: hidden)
+        hiddenBuddies = hidden.map { ($0, bridge.buddy($0)?.name ?? $0) }
+        tree.show(lastBuddies, recent: lastRecent)
         needsDisplay = true
         drawMeAvatar()
     }

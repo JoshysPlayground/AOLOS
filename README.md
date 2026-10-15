@@ -116,6 +116,14 @@ Presence changes play these sounds:
 Do Not Disturb counts as signed on. A phone icon marks a friend who is online
 only on the Discord mobile app.
 
+Recent Buddies lists the people you last had a direct message with, online or
+not. They do not have to be friends.
+
+Right click a buddy and choose Hide from Buddy List to leave them out of every
+group and silence their sounds. Their direct messages still open. Right click
+the list and choose Show Hidden Buddy to bring someone back. Hidden buddies are
+Discord user IDs under `hiddenBuddies` in the config file.
+
 Double click a buddy to open an Instant Message window for your direct
 messages with them. A new direct message opens its window and plays `imrcv`.
 Return sends and plays `imsend`. Shift Return adds a line. The B, I, U, S and

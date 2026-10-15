@@ -67,3 +67,15 @@ final class DiscordModelTests: XCTestCase {
         XCTAssertFalse(DiscordBridge.isDiscordHost(nil))
     }
 }
+
+final class RecentBuddiesTests: XCTestCase {
+    func testRecentSkipsHiddenAndDuplicatesAndCaps() {
+        var recent = [Buddy(id: "h", name: "hidden", presence: .online), Buddy(id: "a", name: "a", presence: .offline),
+                      Buddy(id: "a", name: "a", presence: .offline)]
+        recent += (0..<20).map { Buddy(id: "x\($0)", name: "x", presence: .online) }
+        let picked = RecentBuddies.pick(recent, hidden: ["h"])
+        XCTAssertEqual(picked.first?.id, "a")
+        XCTAssertEqual(picked.count, RecentBuddies.limit)
+        XCTAssertEqual(Set(picked.map(\.id)).count, picked.count)
+    }
+}

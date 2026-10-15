@@ -4,11 +4,14 @@ extension Session {
     func setUpDiscord() {
         discord.onChange = { [weak self] in self?.refreshBuddies() }
         discord.onBuddyChange = { [weak self] buddy, change in
+            guard let self, !self.hiddenBuddyIDs.contains(buddy.id) else { return }
             SoundManager.shared.play(change.sound)
-            self?.shell.statusBar.status = "\(buddy.name) \(change.verb)."
+            self.shell.statusBar.status = "\(buddy.name) \(change.verb)."
         }
         discord.onMessage = { [weak self] userId, message in self?.receiveIM(from: userId, message) }
     }
+
+    var hiddenBuddyIDs: Set<String> { Set(config.hiddenBuddies) }
 
     /// The service whose web app runs the Discord bridge. The default config calls it `chat`.
     var discordServiceID: String? {
@@ -30,6 +33,14 @@ extension Session {
         let view = BuddyListView()
         view.onOpen = { [weak self] buddy in self?.openIM(with: buddy) }
         view.onInfo = { [weak self] buddy in self?.showInDiscord(buddy) }
+        view.onHide = { [weak self] buddy in
+            self?.updateConfig { if !$0.hiddenBuddies.contains(buddy.id) { $0.hiddenBuddies.append(buddy.id) } }
+            self?.refreshBuddies()
+        }
+        view.onUnhide = { [weak self] id in
+            self?.updateConfig { $0.hiddenBuddies.removeAll { $0 == id } }
+            self?.refreshBuddies()
+        }
         view.onConnect = { [weak self] in
             guard let self, let id = self.discordServiceID else { return }
             self.openService(id)
@@ -47,13 +58,13 @@ extension Session {
         let height = min(desktop.bounds.height - 20, 640)
         desktop.add(window, size: NSSize(width: width, height: height), minimized: minimized)
         window.setMaximizedFrame(NSRect(x: max(0, desktop.bounds.width - width - 10), y: 10, width: width, height: height))
-        view.reload(discord)
+        view.reload(discord, hidden: hiddenBuddyIDs)
     }
 
     func refreshBuddies() {
-        buddyListView?.reload(discord)
+        buddyListView?.reload(discord, hidden: hiddenBuddyIDs)
         for (id, window) in imWindows {
-            guard let view = window.content as? InstantMessageView, let buddy = discord.buddies[id] else { continue }
+            guard let view = window.content as? InstantMessageView, let buddy = discord.buddy(id) else { continue }
             view.update(buddy: buddy)
             window.title = "\(buddy.name) - Instant Message"
         }
@@ -114,7 +125,7 @@ extension Session {
             return
         }
         guard !mine else { return }
-        let buddy = discord.buddies[userId] ?? Buddy(id: userId, name: userId, presence: .online)
+        let buddy = discord.buddy(userId) ?? Buddy(id: userId, name: userId, presence: .online)
         SoundManager.shared.play(.imReceive)
         guard let view = openIM(with: buddy) else { return }
         view.append(message)

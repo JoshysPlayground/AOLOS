@@ -14,6 +14,8 @@ final class DiscordBridge {
     private(set) var state: State = .closed
     private(set) var me: (id: String, name: String, avatar: URL?)?
     private(set) var buddies: [String: Buddy] = [:]
+    /// Direct message partners, most recent first. They may not be friends.
+    private(set) var recentBuddies: [Buddy] = []
     /// Recent sign on and sign off times. The Buddy List shows a door icon for a few seconds after each.
     private(set) var recent: [String: (change: BuddyChange, date: Date)] = [:]
     private weak var pane: WebPane?
@@ -30,6 +32,8 @@ final class DiscordBridge {
     }
 
     var sortedBuddies: [Buddy] { BuddySort.sorted(Array(buddies.values)) }
+
+    func buddy(_ id: String) -> Buddy? { buddies[id] ?? recentBuddies.first { $0.id == id } }
     var hasPane: Bool { pane != nil }
 
     func attach(_ pane: WebPane) {
@@ -48,6 +52,7 @@ final class DiscordBridge {
         pane = nil
         state = .closed
         buddies = [:]
+        recentBuddies = []
         recent = [:]
         me = nil
         onChange?()
@@ -90,6 +95,7 @@ final class DiscordBridge {
             me = (id, json["name"] as? String ?? id, (json["avatar"] as? String).flatMap(URL.init(string:)))
         }
         let list = (body["friends"] as? [[String: Any]] ?? []).compactMap(Buddy.init(json:))
+        recentBuddies = (body["recent"] as? [[String: Any]] ?? []).compactMap(Buddy.init(json:))
         let firstLoad = buddies.isEmpty
         var next: [String: Buddy] = [:]
         let now = Date()

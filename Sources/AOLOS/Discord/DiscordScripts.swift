@@ -138,6 +138,25 @@ extension Scripts {
         };
       };
 
+      const snowflake = (v) => { try { return BigInt(v || 0); } catch (e) { return 0n; } };
+
+      // Direct message partners, most recent conversation first.
+      const recentDMs = () => {
+        if (!S.channels || typeof S.channels.getMutablePrivateChannels !== 'function') return [];
+        let list = [];
+        try { list = Object.values(S.channels.getMutablePrivateChannels() || {}); } catch (e) { return []; }
+        return list
+          .filter((c) => c && c.type === 1 && c.lastMessageId)
+          .sort((a, b) => {
+            const x = snowflake(a.lastMessageId), y = snowflake(b.lastMessageId);
+            return x === y ? 0 : (x > y ? -1 : 1);
+          })
+          .slice(0, 25)
+          .map(recipient)
+          .filter(Boolean)
+          .map(friend);
+      };
+
       let last = '';
       let pending = null;
       const snapshot = (force) => {
@@ -146,6 +165,7 @@ extension Scripts {
         const body = {
           me: { id: me.id, name: me.globalName || me.global_name || me.username, avatar: avatar(me, me.id) },
           friends: friendIDs().map(friend),
+          recent: recentDMs(),
         };
         const json = JSON.stringify(body);
         if (!force && json === last) return;
@@ -212,7 +232,7 @@ extension Scripts {
       };
 
       const subscribe = () => {
-        [S.presence, S.relationships, S.users].forEach((s) => s.addChangeListener(schedule));
+        [S.presence, S.relationships, S.users, S.channels].forEach((s) => { if (s) s.addChangeListener(schedule); });
         S.dispatcher.subscribe('MESSAGE_CREATE', (a) => {
           if (!a || a.optimistic || !a.message) return;
           if (!S.channels) return;

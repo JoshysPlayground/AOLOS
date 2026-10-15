@@ -102,6 +102,16 @@ struct DirectMessage: Equatable {
     }
 }
 
+/// The Recent Buddies group: the latest direct message partners, online or not, minus hidden buddies.
+enum RecentBuddies {
+    static let limit = 8
+
+    static func pick(_ recent: [Buddy], hidden: Set<String>) -> [Buddy] {
+        var seen = Set<String>()
+        return Array(recent.filter { !hidden.contains($0.id) && seen.insert($0.id).inserted }.prefix(limit))
+    }
+}
+
 /// Friends sorted the way the Buddy List shows them: online first, then by name.
 enum BuddySort {
     static func sorted(_ buddies: [Buddy]) -> [Buddy] {

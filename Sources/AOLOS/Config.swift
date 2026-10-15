@@ -27,6 +27,8 @@ struct AOLConfig: Codable {
     var keywords = AOLConfig.defaultKeywords
     var neverSaveHosts: [String] = []
     var radioPresets: [RadioStation] = []
+    /// Discord user IDs left off the Buddy List.
+    var hiddenBuddies: [String] = []
     var screenNames: [String] = []
     var signOnLocation = "Home (Broadband)"
 
@@ -46,6 +48,7 @@ struct AOLConfig: Codable {
         keywords = try c.decodeIfPresent([String: String].self, forKey: .keywords) ?? d.keywords
         neverSaveHosts = try c.decodeIfPresent([String].self, forKey: .neverSaveHosts) ?? d.neverSaveHosts
         radioPresets = try c.decodeIfPresent([RadioStation].self, forKey: .radioPresets) ?? d.radioPresets
+        hiddenBuddies = try c.decodeIfPresent([String].self, forKey: .hiddenBuddies) ?? d.hiddenBuddies
         screenNames = try c.decodeIfPresent([String].self, forKey: .screenNames) ?? d.screenNames
         signOnLocation = try c.decodeIfPresent(String.self, forKey: .signOnLocation) ?? d.signOnLocation
     }
