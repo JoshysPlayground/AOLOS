@@ -49,9 +49,11 @@ extension Scripts {
         }
       };
 
+      // Some exports are proxies that answer every property with a function. Skip them.
+      const isProxy = (e) => { try { return e.__aolosNoSuchKey !== undefined; } catch (err) { return true; } };
       const find = (test) => {
         for (const e of candidates()) {
-          try { if (test(e)) return e; } catch (err) {}
+          try { if (!isProxy(e) && test(e)) return e; } catch (err) {}
         }
         return null;
       };
@@ -70,7 +72,7 @@ extension Scripts {
         messages: () => store('MessageStore'),
         dispatcher: () => find((e) => typeof e.dispatch === 'function' && typeof e.subscribe === 'function'
                                      && typeof e.unsubscribe === 'function'),
-        actions: () => find((e) => typeof e.sendMessage === 'function' && typeof e.editMessage === 'function'),
+        actions: () => find((e) => typeof e.sendMessage === 'function' && typeof e.fetchMessages === 'function'),
         privates: () => find((e) => typeof e.openPrivateChannel === 'function'),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
