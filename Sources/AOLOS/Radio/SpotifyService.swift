@@ -1,8 +1,12 @@
 import AppKit
 
-/// Spotify sign in with PKCE over the loopback redirect. Spotify accepts a runtime port on 127.0.0.1.
+/// Spotify sign in with PKCE over the loopback redirect.
+/// The Spotify dashboard rejects a redirect without a port, so sign in uses a fixed one.
 @MainActor
 final class SpotifyAuth {
+    static let redirectPort: UInt16 = 43821
+    static var redirectURI: String { "http://127.0.0.1:\(redirectPort)/callback" }
+
     static let scopes = [
         "user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing",
         "playlist-read-private", "playlist-read-collaborative", "user-library-read", "user-library-modify",
@@ -35,15 +39,20 @@ final class SpotifyAuth {
     func connect() async throws {
         guard let clientID else { throw SpotifyError.notConnected }
         server?.stop()
-        let server = try LoopbackServer()
+        let server: LoopbackServer
+        do {
+            server = try LoopbackServer(port: Self.redirectPort)
+        } catch {
+            throw MailError.auth("Port \(Self.redirectPort) is in use, so Spotify sign in cannot start.")
+        }
         self.server = server
         defer {
             server.stop()
             if self.server === server { self.server = nil }
         }
 
-        let port = try await server.start()
-        let redirect = "http://127.0.0.1:\(port)/callback"
+        _ = try await server.start()
+        let redirect = Self.redirectURI
         let verifier = GoogleAuth.randomURLSafe(48)
         let state = GoogleAuth.randomURLSafe(16)
         var components = URLComponents(string: "https://accounts.spotify.com/authorize")!

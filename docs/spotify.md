@@ -12,13 +12,15 @@ in [SpotifyModels.swift](../Sources/AOLOS/Radio/SpotifyModels.swift) is set.
 
 1. Create an app in the Spotify Developer Dashboard.
 2. Select Web API as the API used.
-3. Add the redirect URI `http://127.0.0.1/callback`.
+3. Add the redirect URI `http://127.0.0.1:43821/callback`.
 4. Copy the client ID.
 
 Paste the client ID into Settings, or set `SpotifyClient.id` to build it in.
 The sign in uses PKCE, so there is no client secret.
 
-Spotify assigns the redirect port at runtime for loopback addresses, per the
+The dashboard rejects a loopback redirect without a port, so AOL-OS listens on
+the fixed port `43821` during sign in. Loopback redirects must use `127.0.0.1`
+rather than `localhost`, per the
 [redirect URI rules](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
 Development Mode apps need a Premium account on the app owner and allow at
 most 5 users, per the

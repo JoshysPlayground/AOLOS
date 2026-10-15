@@ -8,9 +8,10 @@ final class LoopbackServer: @unchecked Sendable {
     private let listener: NWListener
     private var continuation: CheckedContinuation<[String: String], Error>?
 
-    init() throws {
+    /// Pass a port when the provider requires the registered redirect to name one.
+    init(port: UInt16? = nil) throws {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any)
         listener = try NWListener(using: params)
     }
 
