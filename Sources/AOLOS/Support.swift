@@ -17,6 +17,13 @@ enum AppPaths {
     }()
 
     static var config: URL { support.appendingPathComponent("config.json") }
+
+    /// Looks for a branding image in Application Support first, then in the app bundle.
+    static func brandingImage(_ name: String) -> NSImage? {
+        var candidates = [support.appendingPathComponent("Branding/\(name)")]
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("Branding/\(name)") { candidates.append(bundled) }
+        return candidates.lazy.compactMap { NSImage(contentsOf: $0) }.first
+    }
 }
 
 extension UUID {

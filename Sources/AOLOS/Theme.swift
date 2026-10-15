@@ -5,11 +5,11 @@ enum Theme {
         NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: a)
     }
 
-    static let titleActive = [rgb(18, 36, 132), rgb(12, 28, 112)]
-    static let titleInactive = [rgb(128, 140, 170), rgb(112, 124, 156)]
+    static let titleActive = [rgb(9, 97, 237), rgb(0, 72, 214), rgb(0, 61, 196)]
+    static let titleInactive = [rgb(140, 166, 229), rgb(118, 143, 214)]
     static let titleAttention = [rgb(255, 178, 66), rgb(232, 122, 18)]
-    static let frameActive = rgb(10, 26, 104)
-    static let frameInactive = rgb(120, 132, 162)
+    static let frameActive = rgb(0, 60, 190)
+    static let frameInactive = rgb(122, 150, 223)
 
     static let chrome = rgb(236, 233, 216)
     static let chromeShade = rgb(172, 168, 153)

@@ -75,7 +75,7 @@ final class Session {
         window.closable = false
         window.resizable = false
         window.focusView = view
-        desktop.add(window, size: NSSize(width: 600, height: 430), centered: true)
+        desktop.add(window, size: NSSize(width: 720, height: 440), centered: true)
         signOnWindow = window
         signOnView = view
         refreshSafety()

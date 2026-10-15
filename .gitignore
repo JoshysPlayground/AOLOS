@@ -6,3 +6,5 @@ build/
 xcuserdata/
 Resources/Sounds/*
 !Resources/Sounds/.gitkeep
+Resources/Branding/*
+!Resources/Branding/.gitkeep

@@ -201,7 +201,11 @@ final class SignOnView: FlippedView {
         panel.lineWidth = 1.2
         panel.stroke()
 
-        drawWordmark(in: NSRect(x: p.minX + 18, y: p.minY + 40, width: p.width / 2 - 90, height: 110))
+        if let logo = Self.logo {
+            drawFitted(logo, in: NSRect(x: p.minX + 12, y: p.minY + 10, width: p.midX - p.minX - 92, height: 170))
+        } else {
+            drawWordmark(in: NSRect(x: p.minX + 18, y: p.minY + 40, width: p.width / 2 - 90, height: 110))
+        }
 
         drawText("Screen Name:", font: Theme.ui(12, bold: true), color: Theme.text,
                  in: NSRect(x: p.midX - 70, y: p.minY + 26, width: 104, height: 18), align: .right)
@@ -218,6 +222,17 @@ final class SignOnView: FlippedView {
                                           attributes: [.font: Theme.ui(11), .foregroundColor: Theme.text]))
         let size = keyword.size()
         keyword.draw(at: NSPoint(x: p.midX - size.width / 2, y: p.maxY - 22))
+    }
+
+    /// Optional artwork at Branding/signon-logo.png. It is not in the repository.
+    private static let logo = AppPaths.brandingImage("signon-logo.png")
+
+    private func drawFitted(_ image: NSImage, in rect: NSRect) {
+        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let target = NSRect(x: rect.minX, y: rect.midY - size.height / 2, width: size.width, height: size.height)
+        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
+                   hints: [.interpolation: NSImageInterpolation.high])
     }
 
     private func drawSwoosh(in rect: NSRect, alpha: CGFloat) {

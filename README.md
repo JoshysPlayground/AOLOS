@@ -60,6 +60,12 @@ names are the raw values of `SoundEvent` in
 
 Git ignores sound files. Supply your own.
 
+## Branding
+
+The Sign On window shows `Branding/signon-logo.png` when it exists, in the
+same two places as sounds. Without it, the window draws a plain AOL-OS
+wordmark. Git ignores branding images.
+
 ## Notifications
 
 The Mailbox keeps an IMAP IDLE connection open. New mail plays `gotmail` and
