@@ -15,7 +15,6 @@ final class SettingsView: FlippedView {
     private let touchID = NSButton(checkboxWithTitle: "Require Touch ID or Mac password to sign on", target: nil, action: nil)
     private let sounds = NSButton(checkboxWithTitle: "Play sounds", target: nil, action: nil)
     private let checkMail = NSButton(checkboxWithTitle: "Check mail at sign on", target: nil, action: nil)
-    private let buddyList = NSButton(checkboxWithTitle: "Open Buddy List at sign on", target: nil, action: nil)
     private let clientID = NSTextField()
     private let clientSecret = NSSecureTextField()
     private let gmailStatus = NSTextField(labelWithString: "")
@@ -38,7 +37,6 @@ final class SettingsView: FlippedView {
         touchID.state = config.requireTouchID ? .on : .off
         sounds.state = config.soundsEnabled ? .on : .off
         checkMail.state = config.openAtSignOn.contains("mail") ? .on : .off
-        buddyList.state = config.openAtSignOn.contains("buddylist") ? .on : .off
         clientID.stringValue = auth.overrideClientID ?? ""
         clientID.placeholderString = GoogleClient.isConfigured ? "Built in. Leave blank." : "1234-abc.apps.googleusercontent.com"
         gmailStatus.font = Theme.ui(11)
@@ -72,7 +70,6 @@ final class SettingsView: FlippedView {
             [NSGridCell.emptyContentView, touchID],
             [NSGridCell.emptyContentView, sounds],
             [NSGridCell.emptyContentView, checkMail],
-            [NSGridCell.emptyContentView, buddyList],
             [label("Gmail Client ID:"), clientID],
             [label("Client Secret:"), clientSecret],
             [NSGridCell.emptyContentView, gmailButtons],
@@ -85,8 +82,8 @@ final class SettingsView: FlippedView {
         form.columnSpacing = 10
         form.column(at: 0).xPlacement = .trailing
         form.column(at: 1).width = 320
-        form.row(at: 6).topPadding = 14
-        form.row(at: 10).topPadding = 14
+        form.row(at: 5).topPadding = 14
+        form.row(at: 9).topPadding = 14
 
         let buttons = NSStackView(views: [soundsFolder, configFile, NSView(), save])
         buttons.orientation = .horizontal
@@ -193,8 +190,6 @@ final class SettingsView: FlippedView {
         config.soundsEnabled = sounds.state == .on
         config.openAtSignOn.removeAll { $0 == "mail" }
         if checkMail.state == .on { config.openAtSignOn.insert("mail", at: 0) }
-        config.openAtSignOn.removeAll { $0 == "buddylist" }
-        if buddyList.state == .on { config.openAtSignOn.append("buddylist") }
         if !clientID.stringValue.isEmpty || auth.overrideClientID != nil {
             auth.setClient(id: clientID.stringValue, secret: clientSecret.stringValue)
         }

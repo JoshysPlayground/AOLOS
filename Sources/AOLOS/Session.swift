@@ -144,8 +144,9 @@ final class Session {
         shell.statusBar.screenName = config.screenName
         SoundManager.shared.play(.welcome)
         if config.openAtSignOn.contains("mail") { mail.start() }
-        for id in config.openAtSignOn where id != "mail" && id != "write" { openService(id, minimized: true) }
+        for id in config.openAtSignOn where !["mail", "write", "buddylist"].contains(id) { openService(id, minimized: true) }
         openWelcome()
+        openBuddyList()
     }
 
     func signOff() {

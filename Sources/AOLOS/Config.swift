@@ -22,7 +22,7 @@ struct AOLConfig: Codable {
     var screenName = NSUserName()
     var requireTouchID = true
     var soundsEnabled = true
-    var openAtSignOn = ["mail", "buddylist"]
+    var openAtSignOn = ["mail"]
     var services = AOLConfig.defaultServices
     var keywords = AOLConfig.defaultKeywords
     var neverSaveHosts: [String] = []

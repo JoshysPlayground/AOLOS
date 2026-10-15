@@ -96,9 +96,9 @@ to fire.
 
 ## Buddy List
 
-The Buddy List shows your Discord friends in AIM style. It opens at sign on
-unless that is turned off in Settings. The keyword `buddy list` and the People
-button also open it.
+The Buddy List shows your Discord friends in AIM style. It opens at sign on.
+The keyword `buddy list` and the People button bring it back after you close
+it.
 
 The list reads friends and presence from the Discord web app, so People
 Connection stays open, minimized if you like. Sign in to Discord there once.
