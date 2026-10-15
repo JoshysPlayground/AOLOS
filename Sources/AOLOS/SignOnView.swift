@@ -174,14 +174,14 @@ final class SignOnView: FlippedView {
         locationPopup.frame = NSRect(x: p.midX + 40, y: p.minY + 112, width: p.maxX - p.midX - 62, height: 26)
         signOnButton.frame = NSRect(x: p.maxX - 132, y: p.minY + 150, width: 110, height: 28)
         optionsButton.frame = NSRect(x: signOnButton.frame.minX - 128, y: p.minY + 152, width: 116, height: 24)
-        cancelButton.frame = NSRect(x: p.midX - 50, y: safetyRect.maxY - 34, width: 100, height: 26)
+        cancelButton.frame = signOnButton.frame
 
         let s = safetyRect
-        statusLabel.frame = NSRect(x: s.minX, y: s.minY + 2, width: s.width, height: 18)
+        statusLabel.frame = NSRect(x: s.minX, y: s.minY + 8, width: s.width, height: 18)
         let slot = s.width / CGFloat(steps.count)
         for i in steps.indices {
-            stepViews[i].frame = NSRect(x: s.minX + slot * CGFloat(i), y: s.minY + 18, width: slot, height: 36)
-            stepLabels[i].frame = NSRect(x: s.minX + slot * CGFloat(i), y: s.minY + 54, width: slot, height: 16)
+            stepViews[i].frame = NSRect(x: s.minX + slot * CGFloat(i), y: s.minY + 32, width: slot, height: 36)
+            stepLabels[i].frame = NSRect(x: s.minX + slot * CGFloat(i), y: s.minY + 72, width: slot, height: 16)
         }
     }
 
@@ -212,7 +212,15 @@ final class SignOnView: FlippedView {
         drawText("Location:", font: Theme.ui(12, bold: true), color: Theme.text,
                  in: NSRect(x: p.midX - 70, y: p.minY + 116, width: 104, height: 18), align: .right)
 
-        if !connecting { drawSafety(in: safetyRect) }
+        if connecting {
+            let box = NSBezierPath(roundedRect: safetyRect, xRadius: 6, yRadius: 6)
+            NSColor.white.withAlphaComponent(0.75).setFill()
+            box.fill()
+            Theme.rgb(150, 180, 214).setStroke()
+            box.stroke()
+        } else {
+            drawSafety(in: safetyRect)
+        }
 
         let keyword = NSMutableAttributedString(string: "Go to AOL-OS Keyword: ", attributes: [.font: Theme.ui(11), .foregroundColor: Theme.text])
         keyword.append(NSAttributedString(string: "Safety", attributes: [
@@ -405,6 +413,8 @@ final class SignOnView: FlippedView {
         connecting = on
         setBusy(on)
         cancelButton.isHidden = !on
+        signOnButton.isHidden = on
+        optionsButton.isHidden = on
         statusLabel.isHidden = !on
         (stepViews + stepLabels).forEach { $0.isHidden = !on }
         if on {

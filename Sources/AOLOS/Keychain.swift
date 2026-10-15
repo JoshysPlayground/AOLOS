@@ -47,32 +47,70 @@ enum Keychain {
         return status == errSecSuccess
     }
 
+    /// All app secrets live in one generic-password item as a JSON object, read once per launch.
+    /// macOS asks for Keychain access per item, so one item means at most one prompt.
+    private static let storeAccount = "secrets"
+    private static let legacyKeys = [
+        "google.clientID", "google.clientSecret", "google.refreshToken", "google.email",
+        "spotify.clientID", "spotify.refreshToken", "spotify.user",
+    ]
+    nonisolated(unsafe) private static var cache: [String: String]?
+
     static func secret(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: secretService,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+        loadStore()[key]
     }
 
     @discardableResult
     static func setSecret(_ key: String, _ value: String?) -> Bool {
+        var store = loadStore()
+        guard store[key] != value else { return true }
+        store[key] = value
+        cache = store
+        return writeItem(storeAccount, try? JSONEncoder().encode(store))
+    }
+
+    private static func loadStore() -> [String: String] {
+        if let cache { return cache }
+        var store: [String: String] = [:]
+        if let data = readItem(storeAccount), let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            store = decoded
+        } else {
+            for key in legacyKeys {
+                if let data = readItem(key), let value = String(data: data, encoding: .utf8) { store[key] = value }
+            }
+            if !store.isEmpty, writeItem(storeAccount, try? JSONEncoder().encode(store)) {
+                legacyKeys.forEach { writeItem($0, nil) }
+            }
+        }
+        cache = store
+        return store
+    }
+
+    private static func readItem(_ account: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: secretService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
+        return result as? Data
+    }
+
+    @discardableResult
+    private static func writeItem(_ account: String, _ data: Data?) -> Bool {
         let match: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: secretService,
-            kSecAttrAccount as String: key,
+            kSecAttrAccount as String: account,
         ]
-        guard let value else {
-            return SecItemDelete(match as CFDictionary) == errSecSuccess
+        guard let data else {
+            let status = SecItemDelete(match as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         }
-        let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+        let attributes: [String: Any] = [kSecValueData as String: data]
         var status = SecItemUpdate(match as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             status = SecItemAdd(match.merging(attributes) { $1 } as CFDictionary, nil)
