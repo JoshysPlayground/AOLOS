@@ -99,6 +99,8 @@ final class MDIWindow: FlippedView {
     weak var desktop: DesktopView?
     weak var focusView: NSView?
     var onClose: (() -> Void)?
+    /// Closing minimizes instead. Sign off still closes it. The Buddy List relies on the Discord window staying loaded.
+    var minimizesOnClose = false
     var minSize = NSSize(width: 320, height: 200)
     var zIndex = 0
     private(set) var isMaximized = false

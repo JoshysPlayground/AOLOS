@@ -249,6 +249,10 @@ final class Session {
             self?.serviceWindows[id] = nil
             if let pane { self?.discord.paneClosed(pane) }
         }
+        if DiscordBridge.isDiscordHost(url.host) {
+            window.minimizesOnClose = true
+            discord.attach(pane)
+        }
         serviceWindows[id] = window
         desktop.add(window, minimized: minimized)
     }

@@ -101,8 +101,8 @@ The keyword `buddy list` and the People button bring it back after you close
 it.
 
 The list reads friends and presence from the Discord web app, so People
-Connection stays open, minimized if you like. Sign in to Discord there once.
-Closing that window signs the Buddy List off.
+Connection stays open. Sign in to Discord there once. Closing that window
+minimizes it so the Buddy List keeps working.
 
 Presence changes play these sounds:
 

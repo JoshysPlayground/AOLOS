@@ -15,7 +15,7 @@ final class TrayChip: PressableView {
         layer?.masksToBounds = true
         layer?.cornerRadius = 7
         layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        closeButton.isHidden = !target.closable
+        closeButton.isHidden = !target.closable || target.minimizesOnClose
         addSubview(restoreButton)
         addSubview(closeButton)
     }
@@ -152,7 +152,11 @@ final class DesktopView: FlippedView {
         activate(w)
     }
 
-    func close(_ w: MDIWindow) {
+    func close(_ w: MDIWindow, force: Bool = false) {
+        if w.minimizesOnClose && !force {
+            if !w.isHidden { minimize(w) }
+            return
+        }
         chips.removeValue(forKey: ObjectIdentifier(w))?.removeFromSuperview()
         w.removeFromSuperview()
         windows.removeAll { $0 === w }
@@ -162,7 +166,7 @@ final class DesktopView: FlippedView {
     }
 
     func closeAll(includingPinned: Bool = false) {
-        for w in windows where w.closable || includingPinned { close(w) }
+        for w in windows where w.closable || includingPinned { close(w, force: includingPinned) }
     }
 
     func cycle() {
