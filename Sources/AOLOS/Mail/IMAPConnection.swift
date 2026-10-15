@@ -10,9 +10,25 @@ struct MailSummary: Hashable {
     let subject: String
 }
 
+struct MailFolderInfo: Equatable {
+    let name: String
+    let attributes: [String]
+
+    /// Gmail nests system labels under "[Gmail]/". The prefix is hidden in the folder list.
+    var displayName: String {
+        name.hasPrefix("[Gmail]/") ? String(name.dropFirst(8)) : name
+    }
+
+    var depth: Int { displayName.filter { $0 == "/" }.count }
+    var leafName: String { displayName.split(separator: "/").last.map(String.init) ?? displayName }
+}
+
 struct MailFolders {
     var sent = "[Gmail]/Sent Mail"
     var trash = "[Gmail]/Trash"
+    var junk = "[Gmail]/Spam"
+    var allMail = "[Gmail]/All Mail"
+    var list: [MailFolderInfo] = []
 }
 
 /// One authenticated IMAP session. Callers must not interleave commands. MailService serializes them.
@@ -60,7 +76,11 @@ actor IMAPConnection {
             let attrs = entry.attributes.map { $0.lowercased() }
             if attrs.contains("\\sent") { folders.sent = entry.name }
             if attrs.contains("\\trash") { folders.trash = entry.name }
+            if attrs.contains("\\junk") { folders.junk = entry.name }
+            if attrs.contains("\\all") { folders.allMail = entry.name }
+            if !attrs.contains("\\noselect") { folders.list.append(MailFolderInfo(name: entry.name, attributes: attrs)) }
         }
+        folders.list.sort { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
         return folders
     }
 

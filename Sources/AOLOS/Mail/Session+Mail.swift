@@ -46,15 +46,17 @@ extension Session {
         let view = MailboxView(mail: mail)
         view.onOpen = { [weak self] summary in self?.openMessage(summary) }
         view.onAction = { [weak self] action, summaries in self?.mailboxAction(action, summaries) }
+        view.onOpenLink = { [weak self] url in self?.openBrowser(url) }
         let window = MDIWindow(title: "Mailbox", icon: Icons.symbol("envelope.fill", colors: [.white]), content: view)
-        window.minSize = NSSize(width: 560, height: 320)
+        window.minSize = NSSize(width: 640, height: 420)
         window.onClose = { [weak self] in
             self?.mailboxWindow = nil
             self?.mailboxView = nil
         }
         mailboxWindow = window
         mailboxView = view
-        desktop.add(window, minimized: minimized)
+        desktop.add(window, size: NSSize(width: min(desktop.bounds.width * 0.85, 1040),
+                                         height: min(desktop.bounds.height * 0.9, 720)), minimized: minimized)
     }
 
     private func mailboxAction(_ action: MailboxView.Action, _ summaries: [MailSummary]) {
@@ -83,6 +85,10 @@ extension Session {
         case .delete:
             Task { [weak self] in
                 do { try await self?.mail.delete(summaries) } catch { self?.showMailError(error) }
+            }
+        case .reportSpam:
+            Task { [weak self] in
+                do { try await self?.mail.reportSpam(summaries) } catch { self?.showMailError(error) }
             }
         case .refresh:
             mail.start()
@@ -183,20 +189,18 @@ extension Session {
         let view = ComposeView(to: to, cc: cc, subject: subject, body: body)
         let window = MDIWindow(title: subject.isEmpty ? "Write Mail" : subject,
                                icon: Icons.symbol("square.and.pencil", colors: [.white]), content: view)
-        window.minSize = NSSize(width: 460, height: 340)
+        window.minSize = NSSize(width: 620, height: 440)
         window.focusView = view.preferredFirstResponder
-        desktop.add(window, size: NSSize(width: min(desktop.bounds.width * 0.6, 760), height: min(desktop.bounds.height * 0.8, 620)))
+        desktop.add(window, size: NSSize(width: min(desktop.bounds.width * 0.7, 860), height: min(desktop.bounds.height * 0.85, 640)))
 
+        view.onAddressBook = { [weak self, weak view] anchor in
+            guard let self, let view else { return }
+            self.showAddressBook(for: view, from: anchor)
+        }
         view.onSend = { [weak self, weak view, weak window] in
             guard let self, let view else { return }
-            let outgoing = OutgoingMail(
-                from: from,
-                to: MailAddress.split(view.toField.stringValue),
-                cc: MailAddress.split(view.ccField.stringValue),
-                subject: view.subjectField.stringValue,
-                body: view.textView.string,
-                inReplyTo: inReplyTo,
-                references: references?.isEmpty == true ? nil : references)
+            let outgoing = view.makeOutgoing(from: from, inReplyTo: inReplyTo,
+                                             references: references?.isEmpty == true ? nil : references)
             guard !outgoing.recipients.isEmpty else {
                 view.showStatus("Add someone to send to.")
                 NSSound.beep()
@@ -214,6 +218,31 @@ extension Session {
                 }
             }
         }
+    }
+
+    /// Recent correspondents stand in for the AOL Address Book.
+    private func showAddressBook(for view: ComposeView, from anchor: NSView) {
+        var seen = Set<String>()
+        let me = mail.auth.email?.lowercased()
+        var people: [String] = []
+        for address in mail.inbox.map(\.from) + mail.sent.flatMap({ MailAddress.split($0.to) }) {
+            let email = MailAddress.email(address).lowercased()
+            guard !email.isEmpty, email != me, seen.insert(email).inserted else { continue }
+            people.append(address)
+            if people.count == 30 { break }
+        }
+        let menu = NSMenu()
+        if people.isEmpty {
+            let empty = NSMenuItem(title: "No recent addresses", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for person in people.sorted(by: { MailAddress.name($0).localizedCaseInsensitiveCompare(MailAddress.name($1)) == .orderedAscending }) {
+            let title = "\(MailAddress.name(person)) <\(MailAddress.email(person))>"
+            menu.addItem(ActionItem(title) { [weak view] in view?.insertAddress(person) })
+        }
+        menu.autoenablesItems = false
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
     }
 
     func connectGmail() {

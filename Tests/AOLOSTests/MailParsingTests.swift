@@ -140,4 +140,20 @@ final class MailHelperTests: XCTestCase {
         let payload = GoogleAuth.base64URL(Data(#"{"email":"me@example.com"}"#.utf8))
         XCTAssertEqual(GoogleAuth.email(fromIDToken: "x.\(payload).y"), "me@example.com")
     }
+
+    func testOutgoingMultipartRoundTrip() {
+        let file = MailAttachment(filename: "notes.txt", mimeType: "text/plain", data: Data("attached".utf8))
+        let mail = OutgoingMail(from: "me@example.com", to: ["you@example.com"], cc: [], subject: "Hi",
+                                body: "Plain body", inReplyTo: nil, references: nil,
+                                html: "<b>Rich body</b>", attachments: [file], returnReceipt: true)
+        let raw = mail.rfc822()
+        let text = String(decoding: raw, as: UTF8.self)
+        XCTAssertTrue(text.contains("Disposition-Notification-To: me@example.com"))
+
+        let parsed = MailMessage(summary: MailSummary(uid: 1, folder: "INBOX", seen: true, date: Date(),
+                                                      from: "", to: "", subject: ""), raw: raw)
+        XCTAssertTrue(parsed.html.contains("<b>Rich body</b>"))
+        XCTAssertEqual(parsed.plainText, "Plain body")
+        XCTAssertEqual(parsed.attachments, ["notes.txt"])
+    }
 }

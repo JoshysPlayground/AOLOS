@@ -22,12 +22,16 @@ final class MailService {
     private var idleConnection: IMAPConnection?
     private var idleTask: Task<Void, Never>?
     private var tail: Task<Void, Never>?
-    private var folders = MailFolders()
+    private(set) var folders = MailFolders()
+    private(set) var folderMessages: [String: [MailSummary]] = [:]
+    private(set) var searchResults: [MailSummary] = []
+    private(set) var lastSearch = ""
     private var foldersLoaded = false
     private var knownUnseen: Set<UInt32> = []
 
     static let inboxLimit = 300
     static let sentLimit = 100
+    static let folderLimit = 150
 
     func summaries(for box: Box) -> [MailSummary] {
         switch box {
@@ -63,6 +67,8 @@ final class MailService {
         Task { for c in connections { await c.close() } }
         inbox = []
         sent = []
+        folderMessages = [:]
+        searchResults = []
         unreadCount = 0
         knownUnseen = []
         hasLoaded = false
@@ -102,14 +108,48 @@ final class MailService {
         onChange?()
     }
 
-    func message(_ summary: MailSummary) async throws -> MailMessage {
+    func loadFolder(_ name: String) async throws {
+        let summaries = try await serial { c -> [MailSummary] in
+            try await c.select(name)
+            let all = try await c.uidSearch("ALL")
+            return try await c.fetchSummaries(Array(all.suffix(Self.folderLimit)))
+        }
+        folderMessages[name] = summaries.sorted { $0.date > $1.date }
+        onChange?()
+    }
+
+    /// Searches All Mail with Gmail's own query syntax through the X-GM-RAW extension.
+    func search(_ query: String) async throws {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastSearch = q
+        guard !q.isEmpty else {
+            searchResults = []
+            onChange?()
+            return
+        }
+        let folder = folders.allMail
+        let summaries = try await serial { c -> [MailSummary] in
+            try await c.select(folder)
+            let hits = try await c.uidSearch("X-GM-RAW \(IMAPParser.quote(q))")
+            return try await c.fetchSummaries(Array(hits.suffix(Self.folderLimit)))
+        }
+        searchResults = summaries.sorted { $0.date > $1.date }
+        onChange?()
+    }
+
+    func reportSpam(_ summaries: [MailSummary]) async throws {
+        try await move(summaries, to: folders.junk)
+    }
+
+    func message(_ summary: MailSummary, markSeen: Bool = true) async throws -> MailMessage {
+        let mark = markSeen && !summary.seen
         let raw = try await serial { c -> Data in
             try await c.select(summary.folder)
             let raw = try await c.fetchRaw(summary.uid)
-            if !summary.seen { try await c.setSeen([summary.uid], true) }
+            if mark { try await c.setSeen([summary.uid], true) }
             return raw
         }
-        if !summary.seen { markLocally(summary, seen: true) }
+        if mark { markLocally(summary, seen: true) }
         return await Task.detached { MailMessage(summary: summary, raw: raw) }.value
     }
 
@@ -136,21 +176,29 @@ final class MailService {
         try await delete([summary])
     }
 
-    /// Moves the whole selection to Trash with one MOVE per folder.
     func delete(_ summaries: [MailSummary]) async throws {
-        guard !summaries.isEmpty else { return }
-        let trash = folders.trash
-        for (folder, group) in Dictionary(grouping: summaries, by: \.folder) {
+        try await move(summaries, to: folders.trash)
+    }
+
+    /// Moves the whole selection with one MOVE per source folder.
+    func move(_ summaries: [MailSummary], to destination: String) async throws {
+        let moving = summaries.filter { $0.folder != destination }
+        guard !moving.isEmpty else { return }
+        for (folder, group) in Dictionary(grouping: moving, by: \.folder) {
             let uids = group.map(\.uid)
             try await serial { c in
                 try await c.select(folder)
-                try await c.move(uids, to: trash)
+                try await c.move(uids, to: destination)
             }
         }
-        let keys = Set(summaries.map { "\($0.folder)/\($0.uid)" })
-        inbox.removeAll { keys.contains("\($0.folder)/\($0.uid)") }
-        sent.removeAll { keys.contains("\($0.folder)/\($0.uid)") }
-        for summary in summaries where summary.folder == "INBOX" && knownUnseen.remove(summary.uid) != nil {
+        let keys = Set(moving.map { "\($0.folder)/\($0.uid)" })
+        let gone: (MailSummary) -> Bool = { keys.contains("\($0.folder)/\($0.uid)") }
+        inbox.removeAll(where: gone)
+        sent.removeAll(where: gone)
+        searchResults.removeAll(where: gone)
+        for key in folderMessages.keys { folderMessages[key]?.removeAll(where: gone) }
+        folderMessages[destination] = nil
+        for summary in moving where summary.folder == "INBOX" && knownUnseen.remove(summary.uid) != nil {
             unreadCount = max(0, unreadCount - 1)
         }
         onChange?()
@@ -164,9 +212,10 @@ final class MailService {
     }
 
     private func markLocally(_ summary: MailSummary, seen: Bool, notify: Bool = true) {
-        if let i = inbox.firstIndex(where: { $0.uid == summary.uid && $0.folder == summary.folder }) {
-            inbox[i].seen = seen
-        }
+        let same: (MailSummary) -> Bool = { $0.uid == summary.uid && $0.folder == summary.folder }
+        if let i = inbox.firstIndex(where: same) { inbox[i].seen = seen }
+        if let i = searchResults.firstIndex(where: same) { searchResults[i].seen = seen }
+        if let i = folderMessages[summary.folder]?.firstIndex(where: same) { folderMessages[summary.folder]?[i].seen = seen }
         if summary.folder == "INBOX" {
             if seen, knownUnseen.remove(summary.uid) != nil { unreadCount = max(0, unreadCount - 1) }
             if !seen, knownUnseen.insert(summary.uid).inserted { unreadCount += 1 }

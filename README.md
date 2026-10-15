@@ -76,6 +76,9 @@ Toolbar names are `read`, `read-closed`, `write`, `im`, `people`, `safety`,
 signed off. Read shows `read` while unread mail is waiting and `read-closed`
 otherwise.
 
+Write Mail uses the same scheme for its side buttons: `sendnow`, `sendlater`,
+`addressbook` and `print`.
+
 ## Notifications
 
 The Mailbox keeps an IMAP IDLE connection open. New mail plays `gotmail` and

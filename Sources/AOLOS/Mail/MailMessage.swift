@@ -180,6 +180,12 @@ struct MailMessage {
     }
 }
 
+struct MailAttachment: Equatable {
+    let filename: String
+    let mimeType: String
+    let data: Data
+}
+
 struct OutgoingMail {
     var from: String
     var to: [String]
@@ -188,11 +194,15 @@ struct OutgoingMail {
     var body: String
     var inReplyTo: String?
     var references: String?
+    var html: String? = nil
+    var attachments: [MailAttachment] = []
+    var returnReceipt = false
 
     var recipients: [String] {
         (to + cc).map(MailAddress.email).filter { !$0.isEmpty }
     }
 
+    /// Plain text alone, text and HTML as multipart/alternative, and attachments wrapped in multipart/mixed.
     func rfc822(date: Date = Date()) -> Data {
         func clean(_ s: String) -> String {
             s.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
@@ -207,17 +217,51 @@ struct OutgoingMail {
         lines.append("Message-ID: <\(UUID().uuidString)@aol-os.local>")
         if let inReplyTo { lines.append("In-Reply-To: \(clean(inReplyTo))") }
         if let references { lines.append("References: \(clean(references))") }
+        if returnReceipt { lines.append("Disposition-Notification-To: \(clean(from))") }
         lines.append("MIME-Version: 1.0")
-        lines.append("Content-Type: text/plain; charset=UTF-8")
-        lines.append("Content-Transfer-Encoding: base64")
 
-        let normalized = body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
-        let encoded = Data(normalized.utf8).base64EncodedString(
-            options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed])
-        return Data((lines.joined(separator: "\r\n") + "\r\n\r\n" + encoded + "\r\n").utf8)
+        let text = Self.part(["Content-Type: text/plain; charset=UTF-8"], Data(Self.crlf(body).utf8))
+        var content = text
+        if let html {
+            let htmlPart = Self.part(["Content-Type: text/html; charset=UTF-8"], Data(Self.crlf(html).utf8))
+            content = Self.multipart("alternative", [text, htmlPart])
+        }
+        if !attachments.isEmpty {
+            let files = attachments.map { a in
+                Self.part([
+                    "Content-Type: \(a.mimeType); name=\(Self.quotedParam(a.filename))",
+                    "Content-Disposition: attachment; filename=\(Self.quotedParam(a.filename))",
+                ], a.data)
+            }
+            content = Self.multipart("mixed", [content] + files)
+        }
+        return Data((lines.joined(separator: "\r\n") + "\r\n" + content + "\r\n").utf8)
     }
 
     static func encodeHeader(_ s: String) -> String {
         s.allSatisfy(\.isASCII) ? s : "=?UTF-8?B?\(Data(s.utf8).base64EncodedString())?="
+    }
+
+    private static func crlf(_ s: String) -> String {
+        s.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
+    }
+
+    private static func quotedParam(_ name: String) -> String {
+        let safe = name.replacingOccurrences(of: "\"", with: "'").replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        return "\"\(encodeHeader(safe))\""
+    }
+
+    /// A leaf part: its headers, a blank line, then the body in base64.
+    private static func part(_ headers: [String], _ data: Data) -> String {
+        let encoded = data.base64EncodedString(options: [.lineLength76Characters, .endLineWithCarriageReturn, .endLineWithLineFeed])
+        return (headers + ["Content-Transfer-Encoding: base64"]).joined(separator: "\r\n") + "\r\n\r\n" + encoded
+    }
+
+    private static func multipart(_ subtype: String, _ parts: [String]) -> String {
+        let boundary = "aolos-\(UUID().uuidString)"
+        var out = "Content-Type: multipart/\(subtype); boundary=\"\(boundary)\"\r\n\r\n"
+        for p in parts { out += "--\(boundary)\r\n\(p)\r\n" }
+        return out + "--\(boundary)--"
     }
 }
