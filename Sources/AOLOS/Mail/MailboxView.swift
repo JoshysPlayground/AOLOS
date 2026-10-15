@@ -61,7 +61,7 @@ final class MailHeaderBar: FlippedView {
     var selected = 0 { didSet { needsDisplay = true } }
     var onSelect: ((Int) -> Void)?
     var onMenu: ((Int, NSPoint) -> Void)?
-    let menuTitles = ["Mail Options", "Help"]
+    var menuTitles = ["Mail Options", "Help"] { didSet { needsDisplay = true } }
 
     private func tabRects() -> [NSRect] {
         var x: CGFloat = 8
@@ -804,7 +804,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     }
 }
 
-private final class FolderCell: NSTableCellView {
+final class FolderCell: NSTableCellView {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private var indent = 0

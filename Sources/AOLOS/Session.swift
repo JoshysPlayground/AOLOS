@@ -24,6 +24,9 @@ final class Session {
     let spotify = SpotifyService()
     var radioWindow: MDIWindow?
     var radioView: RadioView?
+    let photos = PhotoLibrary()
+    var picturesWindow: MDIWindow?
+    var picturesView: PicturesView?
 
     var desktop: DesktopView { shell.desktop }
     var activeWebPane: WebPane? { desktop.activeWindow?.content as? WebPane }
@@ -218,6 +221,7 @@ final class Session {
         case "write" where !web: openCompose(); return
         case "radio": openRadio(); return
         case "spotify" where !web: openRadio(); return
+        case "photos" where !web: openPictures(); return
         default: break
         }
         guard let service = config.service(id) else { go(id); return }

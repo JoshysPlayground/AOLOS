@@ -192,6 +192,11 @@ final class ComposeView: FlippedView {
             returnReceipt: receipt.state == .on)
     }
 
+    func addAttachment(_ file: MailAttachment) {
+        attachments.append(file)
+        updateAttachments()
+    }
+
     func insertAddress(_ address: String) {
         let current = toView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         toView.string = current.isEmpty ? address : current + ", " + address

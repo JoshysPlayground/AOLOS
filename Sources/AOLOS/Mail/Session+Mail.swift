@@ -180,13 +180,14 @@ extension Session {
     }
 
     func openCompose(to: String = "", cc: String = "", subject: String = "", body: String = "",
-                     inReplyTo: String? = nil, references: String? = nil) {
+                     inReplyTo: String? = nil, references: String? = nil, attachments: [MailAttachment] = []) {
         guard signedOn else { return }
         guard mail.auth.isConnected, let from = mail.auth.email else {
             openMailbox()
             return
         }
         let view = ComposeView(to: to, cc: cc, subject: subject, body: body)
+        attachments.forEach(view.addAttachment)
         let window = MDIWindow(title: subject.isEmpty ? "Write Mail" : subject,
                                icon: Icons.symbol("square.and.pencil", colors: [.white]), content: view)
         window.minSize = NSSize(width: 620, height: 440)

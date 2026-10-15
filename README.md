@@ -28,10 +28,15 @@ Command Q exits. Command H hides the app. Command Tab still switches apps.
 | IM | Slack | `https://app.slack.com/client` |
 | Chat | Discord | `https://discord.com/channels/@me` |
 | Music | AOL Radio for Spotify, or YouTube Music | Spotify Web API, `https://music.youtube.com` |
+| Pictures | AOL Pictures for the Mac Photos library | PhotoKit |
 | Finance | Your bank | Set on first use |
 
 Mail needs a one-time Google OAuth setup. See [docs/gmail.md](docs/gmail.md).
 The keyword `gmail` opens Gmail on the web instead.
+
+AOL Pictures asks for Photos access the first time it opens. It can view,
+favorite, save, and mail pictures, and Upload Pictures adds files to the
+library.
 
 AOL Radio needs a Spotify app ID. See [docs/spotify.md](docs/spotify.md). The
 keyword `spotify web` opens the Spotify web player instead.

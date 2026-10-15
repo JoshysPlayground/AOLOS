@@ -26,5 +26,9 @@
     <string>Voice chat in Discord and Slack calls.</string>
     <key>NSCameraUsageDescription</key>
     <string>Video in Discord and Slack calls.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>AOL Pictures shows the photos and videos in your Photos library.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Upload Pictures adds your files to your Photos library.</string>
 </dict>
 </plist>
