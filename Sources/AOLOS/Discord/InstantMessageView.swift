@@ -1,14 +1,76 @@
 import AppKit
 
-/// The message entry box. Return sends and Shift-Return adds a new line.
+/// IM text views. Return sends and Shift-Return adds a new line. Dropped or pasted files become attachments.
 final class IMInputView: NSTextView {
     var onSend: (() -> Void)?
+    var onFiles: (([DiscordBridge.Attachment]) -> Void)?
 
     override func keyDown(with event: NSEvent) {
-        if (event.keyCode == 36 || event.keyCode == 76), !event.modifierFlags.contains(.shift) {
+        if isEditable, event.keyCode == 36 || event.keyCode == 76, !event.modifierFlags.contains(.shift) {
             onSend?()
         } else {
             super.keyDown(with: event)
+        }
+    }
+
+    func acceptFileDrops() {
+        registerForDraggedTypes([.fileURL, .png, .tiff])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        IMAttachments.read(sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        IMAttachments.read(sender.draggingPasteboard).isEmpty ? super.draggingUpdated(sender) : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let files = IMAttachments.read(sender.draggingPasteboard)
+        guard !files.isEmpty, let onFiles else { return super.performDragOperation(sender) }
+        onFiles(files)
+        return true
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let files = pasteboard.string(forType: .string) == nil ? IMAttachments.read(pasteboard) : []
+        if !files.isEmpty, let onFiles { onFiles(files) } else { super.paste(sender) }
+    }
+}
+
+enum IMAttachments {
+    /// Discord's default upload limit for accounts without Nitro.
+    static let maxBytes = 10 * 1024 * 1024
+
+    static func read(_ pasteboard: NSPasteboard) -> [DiscordBridge.Attachment] {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        if !urls.isEmpty {
+            return urls.compactMap { url in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return DiscordBridge.Attachment(name: url.lastPathComponent, type: mimeType(url.pathExtension), data: data)
+            }
+        }
+        if let png = pasteboard.data(forType: .png) {
+            return [DiscordBridge.Attachment(name: "image.png", type: "image/png", data: png)]
+        }
+        if let tiff = pasteboard.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return [DiscordBridge.Attachment(name: "image.png", type: "image/png", data: png)]
+        }
+        return []
+    }
+
+    static func mimeType(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "heic": return "image/heic"
+        case "mp4": return "video/mp4"
+        case "mov": return "video/quicktime"
+        default: return "application/octet-stream"
         }
     }
 }
@@ -16,6 +78,13 @@ final class IMInputView: NSTextView {
 /// The formatting strip between the transcript and the entry box. Buttons wrap the selection in Discord markdown.
 final class IMFormatBar: FlippedView {
     var onWrap: ((String) -> Void)?
+    var onClearAttachments: (() -> Void)?
+    var attachments: [String] = [] { didSet { needsDisplay = true } }
+
+    private var attachmentRect: NSRect {
+        let x = 8 + CGFloat(items.count) * 30 + 10
+        return NSRect(x: x, y: 0, width: max(0, bounds.width - x - 6), height: bounds.height)
+    }
     private let items: [(String, String, NSFont)] = [
         ("B", "**", Theme.ui(12, bold: true)),
         ("I", "*", NSFontManager.shared.convert(Theme.ui(12), toHaveTrait: .italicFontMask)),
@@ -47,18 +116,33 @@ final class IMFormatBar: FlippedView {
             let size = attributed.size()
             attributed.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
         }
+        if !attachments.isEmpty {
+            let rect = attachmentRect
+            Icons.symbol("paperclip", size: 11, colors: [Theme.aolBlue])?
+                .draw(in: NSRect(x: rect.minX, y: rect.midY - 7, width: 14, height: 14), from: .zero,
+                      operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            drawText(attachments.joined(separator: ", ") + "   (click to remove)", font: Theme.ui(11), color: Theme.text,
+                     in: NSRect(x: rect.minX + 18, y: rect.minY, width: rect.width - 18, height: rect.height))
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if let i = rects().firstIndex(where: { $0.contains(p) }) { onWrap?(items[i].1) }
+        if let i = rects().firstIndex(where: { $0.contains(p) }) {
+            onWrap?(items[i].1)
+        } else if !attachments.isEmpty, attachmentRect.contains(p) {
+            onClearAttachments?()
+        }
     }
 }
 
 /// An AIM Instant Message window for one Discord direct message conversation.
 final class InstantMessageView: FlippedView {
-    var onSend: ((String) -> Void)?
+    var onSend: ((String, [DiscordBridge.Attachment]) -> Void)?
     var onInfo: (() -> Void)?
+    private var pending: [DiscordBridge.Attachment] = [] {
+        didSet { formatBar.attachments = pending.map(\.name) }
+    }
 
     let buddyID: String
     private(set) var buddyName: String
@@ -67,7 +151,7 @@ final class InstantMessageView: FlippedView {
     private var shownIDs: Set<String> = []
 
     private let transcriptScroll = NSScrollView()
-    private let transcript = NSTextView()
+    private let transcript = IMInputView()
     private let formatBar = IMFormatBar()
     private let inputScroll = NSScrollView()
     let input = IMInputView()
@@ -97,6 +181,11 @@ final class InstantMessageView: FlippedView {
         input.typingAttributes = [.font: Self.bodyFont, .foregroundColor: Theme.text]
         input.onSend = { [weak self] in self?.sendTapped() }
         formatBar.onWrap = { [weak self] marker in self?.wrap(marker) }
+        formatBar.onClearAttachments = { [weak self] in self?.pending = [] }
+        for view in [input, transcript] {
+            view.acceptFileDrops()
+            view.onFiles = { [weak self] files in self?.attach(files) }
+        }
 
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.wantsLayer = true
@@ -210,14 +299,26 @@ final class InstantMessageView: FlippedView {
         window?.makeFirstResponder(input)
     }
 
+    private func attach(_ files: [DiscordBridge.Attachment]) {
+        let total = (pending + files).reduce(0) { $0 + $1.data.count }
+        guard total <= IMAttachments.maxBytes else {
+            appendNotice("Attachments over 10 MB can't be sent.")
+            NSSound.beep()
+            return
+        }
+        pending += files
+        window?.makeFirstResponder(input)
+    }
+
     private func sendTapped() {
         let text = input.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { NSSound.beep(); return }
-        onSend?(text)
+        guard !text.isEmpty || !pending.isEmpty else { NSSound.beep(); return }
+        onSend?(text, pending)
     }
 
     func didSend() {
         input.string = ""
+        pending = []
     }
 
     func setBusy(_ busy: Bool) {

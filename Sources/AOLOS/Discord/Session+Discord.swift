@@ -85,10 +85,10 @@ extension Session {
         window.onClose = { [weak self] in self?.imWindows[buddy.id] = nil }
         imWindows[buddy.id] = window
         view.onInfo = { [weak self] in self?.showInDiscord(buddy) }
-        view.onSend = { [weak self, weak view] text in
+        view.onSend = { [weak self, weak view] text, files in
             guard let self, let view else { return }
             view.setBusy(true)
-            self.discord.send(text, to: buddy.id) { [weak view] error in
+            self.discord.send(text, files: files, to: buddy.id) { [weak view] error in
                 view?.setBusy(false)
                 if let error {
                     view?.appendNotice("Message not sent: \(error.localizedDescription)")

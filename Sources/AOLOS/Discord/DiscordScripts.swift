@@ -74,6 +74,9 @@ extension Scripts {
                                      && typeof e.unsubscribe === 'function'),
         actions: () => find((e) => typeof e.sendMessage === 'function' && typeof e.fetchMessages === 'function'),
         privates: () => find((e) => typeof e.openPrivateChannel === 'function'),
+        // The REST wrapper the client sends uploads through. It takes `attachments` and `fields` options.
+        http: () => find((e) => typeof e.get === 'function' && typeof e.post === 'function' && typeof e.put === 'function'
+                              && typeof e.patch === 'function' && typeof e.del === 'function' && !e.Request),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
       const missing = (keys) => keys.filter((k) => !S[k]);
@@ -153,7 +156,7 @@ extension Scripts {
             const x = snowflake(a.lastMessageId), y = snowflake(b.lastMessageId);
             return x === y ? 0 : (x > y ? -1 : 1);
           })
-          .slice(0, 25)
+          .slice(0, 60)
           .map(recipient)
           .filter(Boolean)
           .map(friend);
@@ -241,7 +244,7 @@ extension Scripts {
           const channel = S.channels.getChannel(a.channelId);
           const userId = recipient(channel);
           if (!userId) return;
-          post({ type: 'discord.message', userId, message: message(a.message) });
+          post({ type: 'discord.message', userId, buddy: friend(userId), message: message(a.message) });
         });
         S.dispatcher.subscribe('CONNECTION_OPEN', () => setTimeout(() => snapshot(true), 1500));
         S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
@@ -260,6 +263,20 @@ extension Scripts {
           const cid = await channelFor(userId);
           await need('actions').sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
                                       undefined, {});
+          return true;
+        },
+        upload: async (userId, content, files) => {
+          const cid = await channelFor(userId);
+          const attachments = files.map((f, i) => {
+            const bin = atob(f.data);
+            const bytes = new Uint8Array(bin.length);
+            for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+            const file = new File([bytes], f.name, { type: f.type || 'application/octet-stream' });
+            return { name: `files[${i}]`, file, filename: f.name };
+          });
+          const payload = { content: content || '', attachments: files.map((f, i) => ({ id: i, filename: f.name })) };
+          await need('http').post({ url: `/channels/${cid}/messages`, attachments,
+                                    fields: [{ name: 'payload_json', value: JSON.stringify(payload) }] });
           return true;
         },
         open: (userId) => { need('privates').openPrivateChannel(userId); return true; },

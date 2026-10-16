@@ -16,6 +16,8 @@ final class DiscordBridge {
     private(set) var buddies: [String: Buddy] = [:]
     /// Direct message partners, most recent first. They may not be friends.
     private(set) var recentBuddies: [Buddy] = []
+    /// People seen only through a direct message, such as someone who is not a friend.
+    private var others: [String: Buddy] = [:]
     /// Recent sign on and sign off times. The Buddy List shows a door icon for a few seconds after each.
     private(set) var recent: [String: (change: BuddyChange, date: Date)] = [:]
     private weak var pane: WebPane?
@@ -33,7 +35,7 @@ final class DiscordBridge {
 
     var sortedBuddies: [Buddy] { BuddySort.sorted(Array(buddies.values)) }
 
-    func buddy(_ id: String) -> Buddy? { buddies[id] ?? recentBuddies.first { $0.id == id } }
+    func buddy(_ id: String) -> Buddy? { buddies[id] ?? recentBuddies.first { $0.id == id } ?? others[id] }
     var hasPane: Bool { pane != nil }
 
     func attach(_ pane: WebPane) {
@@ -53,6 +55,7 @@ final class DiscordBridge {
         state = .closed
         buddies = [:]
         recentBuddies = []
+        others = [:]
         recent = [:]
         me = nil
         onChange?()
@@ -74,6 +77,9 @@ final class DiscordBridge {
             guard let userId = body["userId"] as? String,
                   let json = body["message"] as? [String: Any],
                   let message = DirectMessage(json: json) else { return }
+            if let profile = (body["buddy"] as? [String: Any]).flatMap(Buddy.init(json:)), buddies[userId] == nil {
+                others[userId] = profile
+            }
             onMessage?(userId, message)
         case "discord.signedOff":
             buddies = [:]
@@ -136,6 +142,22 @@ final class DiscordBridge {
 
     func send(_ text: String, to userId: String, completion: @escaping @MainActor (Error?) -> Void) {
         call("return await window.__aolosDiscord.send(userId, content);", ["userId": userId, "content": text]) { result in
+            if case .failure(let error) = result { completion(error) } else { completion(nil) }
+        }
+    }
+
+    /// A file dropped on an IM window, sent as a Discord attachment.
+    struct Attachment {
+        let name: String
+        let type: String
+        let data: Data
+    }
+
+    func send(_ text: String, files: [Attachment], to userId: String, completion: @escaping @MainActor (Error?) -> Void) {
+        guard !files.isEmpty else { send(text, to: userId, completion: completion); return }
+        let payload = files.map { ["name": $0.name, "type": $0.type, "data": $0.data.base64EncodedString()] }
+        call("return await window.__aolosDiscord.upload(userId, content, files);",
+             ["userId": userId, "content": text, "files": payload]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
     }

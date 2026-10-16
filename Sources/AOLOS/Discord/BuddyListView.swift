@@ -207,6 +207,8 @@ final class BuddyListView: FlippedView {
     var onUnhide: ((String) -> Void)?
     /// Hidden buddy IDs with the name to show for each.
     var hiddenBuddies: [(id: String, name: String)] = []
+    /// Everyone with an open direct message, most recent first, friends or not.
+    var dmPartners: [Buddy] = []
 
     let tree = BuddyTreeView()
     private let scroll = NSScrollView()
@@ -237,7 +239,14 @@ final class BuddyListView: FlippedView {
         statusLabel.textColor = Theme.mutedText
         statusLabel.alignment = .center
 
-        imButton.action = { [weak self] in if let b = self?.tree.selected { self?.onOpen?(b) } }
+        imButton.action = { [weak self] in
+            guard let self else { return }
+            if let b = self.tree.selected {
+                self.onOpen?(b)
+            } else if let item = self.dmMenuItem(), let menu = item.submenu {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: self.imButton.bounds.height), in: self.imButton)
+            }
+        }
         infoButton.action = { [weak self] in if let b = self?.tree.selected { self?.onInfo?(b) } }
         connect.action = { [weak self] in self?.onConnect?() }
         buttons.buttons = [imButton, infoButton]
@@ -253,9 +262,11 @@ final class BuddyListView: FlippedView {
             NSMenu.popUpContextMenu(menu, with: event, for: view)
         }
         tree.onGroupMenu = { [weak self] event, view in
-            guard let item = self?.hiddenMenuItem() else { return }
+            guard let self else { return }
             let menu = NSMenu()
-            menu.addItem(item)
+            if let item = self.dmMenuItem() { menu.addItem(item) }
+            if let item = self.hiddenMenuItem() { menu.addItem(item) }
+            guard !menu.items.isEmpty else { return }
             NSMenu.popUpContextMenu(menu, with: event, for: view)
         }
         [header, scroll, statusLabel, connect, buttons].forEach(addSubview)
@@ -277,6 +288,17 @@ final class BuddyListView: FlippedView {
 
     private var lastBuddies: [Buddy] = []
     private var lastRecent: [Buddy] = []
+
+    private func dmMenuItem() -> NSMenuItem? {
+        guard !dmPartners.isEmpty else { return nil }
+        let item = NSMenuItem(title: "Send Instant Message To", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for buddy in dmPartners {
+            submenu.addItem(ActionItem(buddy.name) { [weak self] in self?.onOpen?(buddy) })
+        }
+        item.submenu = submenu
+        return item
+    }
 
     private func hiddenMenuItem() -> NSMenuItem? {
         guard !hiddenBuddies.isEmpty else { return nil }
@@ -314,6 +336,7 @@ final class BuddyListView: FlippedView {
         infoButton.isEnabled = bridge.state == .ready
         lastBuddies = bridge.sortedBuddies.filter { !hidden.contains($0.id) }
         lastRecent = RecentBuddies.pick(bridge.recentBuddies, hidden: hidden)
+        dmPartners = bridge.recentBuddies.filter { !hidden.contains($0.id) }
         hiddenBuddies = hidden.map { ($0, bridge.buddy($0)?.name ?? $0) }
         tree.show(lastBuddies, recent: lastRecent)
         needsDisplay = true

@@ -127,7 +127,12 @@ Discord user IDs under `hiddenBuddies` in the config file.
 Double click a buddy to open an Instant Message window for your direct
 messages with them. A new direct message opens its window and plays `imrcv`.
 Return sends and plays `imsend`. Shift Return adds a line. The B, I, U, S and
-code buttons wrap the selection in Discord markdown.
+code buttons wrap the selection in Discord markdown. Drop or paste images and
+files on the window to attach them. Click the attachment list to clear it.
+Attachments are capped at 10 MB, the Discord limit without Nitro.
+
+Right click the list and choose Send Instant Message To for anyone you have an
+open direct message with, friend or not.
 
 The bridge script is `Scripts.discordBridge` in
 [DiscordScripts.swift](Sources/AOLOS/Discord/DiscordScripts.swift). It uses
