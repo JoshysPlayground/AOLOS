@@ -96,6 +96,7 @@ extension Scripts {
         voiceStates: () => store('VoiceStateStore'),
         selectedChannels: () => store('SelectedChannelStore'),
         voiceActions: () => find((e) => typeof e.selectVoiceChannel === 'function'),
+        guildMembers: () => store('GuildMemberStore'),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
       const missing = (keys) => keys.filter((k) => !S[k]);
@@ -344,6 +345,13 @@ extension Scripts {
             post({ type: 'discord.groupMessage', group: group(channel), message: message(a.message) });
             return;
           }
+          if (channel && channel.guild_id && mentionsMe(a.message, channel)) {
+            let serverName = '';
+            try { const g = optional('guilds'); serverName = String((g && g.getGuild(channel.guild_id) || {}).name || ''); } catch (e) {}
+            post({ type: 'discord.mention', channelId: String(a.channelId), guildId: String(channel.guild_id),
+                   roomName: String(channel.name || ''), serverName, message: message(a.message) });
+            return;
+          }
           if (watched.has(String(a.channelId))) {
             post({ type: 'discord.roomMessage', channelId: String(a.channelId), message: message(a.message) });
             return;
@@ -372,6 +380,19 @@ extension Scripts {
           .forEach((t) => S.dispatcher.subscribe(t, reactions));
         S.dispatcher.subscribe('CONNECTION_OPEN', () => setTimeout(() => snapshot(true), 1500));
         S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
+      };
+
+      // A server message that names you directly or one of your roles. @everyone and @here are left out.
+      const mentionsMe = (m, channel) => {
+        const me = S.users.getCurrentUser();
+        if (!me || !m.author || String(m.author.id) === String(me.id)) return false;
+        if ((m.mentions || []).some((u) => String(u && typeof u === 'object' ? u.id : u) === String(me.id))) return true;
+        const roles = m.mention_roles || m.mentionRoles || [];
+        if (!roles.length) return false;
+        try {
+          const member = optional('guildMembers').getMember(channel.guild_id, me.id);
+          return !!member && (member.roles || []).some((r) => roles.includes(r));
+        } catch (e) { return false; }
       };
 
       // Server channels with an open chat room window. Only these forward live messages.

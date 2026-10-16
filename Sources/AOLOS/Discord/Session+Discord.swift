@@ -17,6 +17,7 @@ extension Session {
         discord.onVoiceChange = { [weak self] in
             (self?.desktop.windows.first { $0.content is ChatRoomsView }?.content as? ChatRoomsView)?.reloadRooms()
         }
+        discord.onMention = { [weak self] server, room, message in self?.receiveMention(message, in: room, on: server) }
         DiscordSync.start(self)
         discord.onReady = { [weak self] in
             guard let self else { return }
@@ -254,6 +255,23 @@ extension Session {
             close?()
             self?.discord.watch(room.id, false)
         }
+    }
+
+    /// A mention opens the room like an incoming IM, with imrcv and a status line.
+    private func receiveMention(_ message: DirectMessage, in room: ChatRoom, on server: ChatServer) {
+        SoundManager.shared.play(.imReceive)
+        let who = message.authorName.isEmpty ? "Someone" : message.authorName
+        shell.statusBar.status = "\(who) mentioned you in #\(room.name)" + (server.name.isEmpty ? "" : " on \(server.name)")
+        if let w = imWindows[room.id], let view = w.content as? InstantMessageView {
+            view.append(message)
+            if !w.isActive {
+                w.attention = true
+                desktop.windowsChanged()
+            }
+            return
+        }
+        openChatRoom(room, in: server)
+        (imWindows[room.id]?.content as? InstantMessageView)?.append(message)
     }
 
     private func receiveRoomMessage(_ channelId: String, _ message: DirectMessage) {

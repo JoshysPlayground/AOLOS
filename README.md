@@ -152,6 +152,10 @@ recent history and chat. The list on the right shows who has spoken. Rooms do
 not play sounds, but a room window turns orange when a message arrives while
 it is in the background.
 
+A message in a server that mentions you or one of your roles opens its room,
+plays `imrcv` and names who mentioned you in the status bar. Mentions of
+@everyone and @here do not.
+
 Voice channels show with a speaker and the people in them. Join Voice connects
 the Discord window to that channel, and Leave Voice disconnects.
 

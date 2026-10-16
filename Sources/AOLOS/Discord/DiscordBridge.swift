@@ -31,6 +31,7 @@ final class DiscordBridge {
     var onReady: (() -> Void)?
     var onReactions: ((String, String, [MessageReaction]) -> Void)?
     var onVoiceChange: (() -> Void)?
+    var onMention: ((ChatServer, ChatRoom, DirectMessage) -> Void)?
 
     static let recentInterval: TimeInterval = 8
 
@@ -104,6 +105,12 @@ final class DiscordBridge {
         case "discord.reactions":
             guard let channelId = body["channelId"] as? String, let messageId = body["messageId"] as? String else { return }
             onReactions?(channelId, messageId, MessageReaction.parse(body["reactions"]))
+        case "discord.mention":
+            guard let channelId = body["channelId"] as? String, let guildId = body["guildId"] as? String,
+                  let json = body["message"] as? [String: Any], let message = DirectMessage(json: json),
+                  let server = ChatServer(json: ["id": guildId, "name": body["serverName"] as? String ?? ""]),
+                  let room = ChatRoom(json: ["id": channelId, "name": body["roomName"] as? String ?? channelId]) else { return }
+            onMention?(server, room, message)
         case "discord.voice":
             onVoiceChange?()
         case "discord.signedOff":
