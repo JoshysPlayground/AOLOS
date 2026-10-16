@@ -562,18 +562,32 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
 
     private func sendTapped() {
         let text = input.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pending.isEmpty else { NSSound.beep(); return }
+        guard send.isEnabled, !text.isEmpty || !pending.isEmpty else { NSSound.beep(); return }
+        unsent = (input.string, pending, replyTo)
         onSend?(text, pending, replyTo?.id)
-    }
-
-    func didSend() {
         input.string = ""
         pending = []
         replyTo = nil
     }
 
+    /// What was in the entry box when Send was pressed, kept until Discord confirms it.
+    private var unsent: (text: String, files: [DiscordBridge.Attachment], reply: DirectMessage?)?
+
+    func didSend() {
+        unsent = nil
+    }
+
+    /// Puts a failed message back unless something new was typed meanwhile.
+    func restoreUnsent() {
+        guard let unsent else { return }
+        self.unsent = nil
+        if input.string.isEmpty { input.string = unsent.text }
+        if pending.isEmpty { pending = unsent.files }
+        if replyTo == nil { replyTo = unsent.reply }
+    }
+
+    /// Only Send is disabled while a message goes out, so typing never locks.
     func setBusy(_ busy: Bool) {
         send.isEnabled = !busy
-        input.isEditable = !busy
     }
 }

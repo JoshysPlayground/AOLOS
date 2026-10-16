@@ -34,6 +34,7 @@ final class DiscordBridge {
     var onMention: ((ChatServer, ChatRoom, DirectMessage) -> Void)?
 
     static let recentInterval: TimeInterval = 8
+    static let callTimeout: TimeInterval = 15
 
     nonisolated static func isDiscordHost(_ host: String?) -> Bool {
         guard let host = host?.lowercased() else { return false }
@@ -239,18 +240,30 @@ final class DiscordBridge {
             completion(.failure(DiscordError.notReady))
             return
         }
+        // A page promise that never settles would otherwise leave the caller waiting, such as an IM stuck busy.
+        var finished = false
+        let finish: @MainActor (Result<Any, Error>) -> Void = { result in
+            guard !finished else { return }
+            finished = true
+            completion(result)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.callTimeout) {
+            MainActor.assumeIsolated { finish(.failure(DiscordError.timedOut)) }
+        }
         webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
-            MainActor.assumeIsolated { completion(result) }
+            MainActor.assumeIsolated { finish(result) }
         }
     }
 }
 
 enum DiscordError: LocalizedError {
     case notReady
+    case timedOut
 
     var errorDescription: String? {
         switch self {
         case .notReady: return "Discord is not signed on. Open People Connection and sign in to Discord."
+        case .timedOut: return "Discord did not answer in time. Try again."
         }
     }
 }

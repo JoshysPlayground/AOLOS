@@ -483,13 +483,17 @@ extension Scripts {
         },
         send: async (userId, content, replyTo) => {
           const cid = await channelFor(userId);
-          if (replyTo) {
-            await need('http').post({ url: `/channels/${cid}/messages`,
-                                      body: { content, message_reference: { message_id: String(replyTo) } } });
+          // Sends go over the REST wrapper. The client's own sendMessage can wait forever on a server channel
+          // the client has not opened.
+          const http = optional('http');
+          if (http) {
+            const body = { content, nonce: String((BigInt(Date.now()) - 1420070400000n) << 22n) };
+            if (replyTo) body.message_reference = { message_id: String(replyTo) };
+            await http.post({ url: `/channels/${cid}/messages`, body });
             return true;
           }
           await need('actions').sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
-                                      undefined, {});
+                                            undefined, {});
           return true;
         },
         upload: async (userId, content, files, replyTo) => {

@@ -171,6 +171,7 @@ extension Session {
                 view?.setBusy(false)
                 if let error {
                     view?.appendNotice("Message not sent: \(error.localizedDescription)")
+                    view?.restoreUnsent()
                     NSSound.beep()
                 } else {
                     view?.didSend()
