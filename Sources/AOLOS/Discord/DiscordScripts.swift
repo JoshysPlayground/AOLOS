@@ -9,6 +9,18 @@ extension Scripts {
     (() => {
       if (window.__aolosDiscord || !/(^|\.)discord\.com$/.test(location.hostname)) return;
       const post = (m) => { try { window.webkit.messageHandlers.aolos.postMessage(m); } catch (e) {} };
+
+      // AOL-OS plays its own sounds, so Discord's notification sounds stay silent. They are audio elements
+      // loaded from the client's /assets/ folder. Calls and videos use streams or CDN URLs and still play.
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        const src = this.currentSrc || this.src || '';
+        if (!this.srcObject && /^https:\/\/[^/]*discord\.com\/assets\/[^/]+\.(mp3|ogg|wav)(\?|$)/i.test(src)) {
+          return Promise.resolve();
+        }
+        return play.apply(this, arguments);
+      };
+
       const S = {};
       let req = null;
 

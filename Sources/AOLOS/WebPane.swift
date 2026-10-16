@@ -140,7 +140,9 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
 
         switch type {
         case "notification":
-            session?.attention(from: self, sound: service?.notifySound ?? "notify")
+            // Direct messages already play imrcv from the Buddy List, so the Discord window stays quiet.
+            let quiet = DiscordBridge.isDiscordHost(origin.host) && session?.discord.state == .ready
+            session?.attention(from: self, sound: quiet ? nil : service?.notifySound ?? "notify")
 
         case let discordType where discordType.hasPrefix("discord."):
             guard message.frameInfo.isMainFrame, origin.protocol == "https",
