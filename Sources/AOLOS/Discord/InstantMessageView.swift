@@ -180,6 +180,8 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     let buddyID: String
     private(set) var buddyName: String
     let isGroup: Bool
+    /// Chat rooms list whoever has spoken, since a server channel has no fixed member list.
+    var tracksSpeakers = false
     private let memberList = ChatMemberList()
     var members: [Buddy] {
         get { memberList.members }
@@ -310,6 +312,9 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         guard shownIDs.insert(message.id).inserted else { return false }
         let mine = message.authorID == myID
         let theirs = message.authorName.isEmpty ? buddyName : message.authorName
+        if tracksSpeakers, !message.authorID.isEmpty, !members.contains(where: { $0.id == message.authorID }) {
+            members.append(Buddy(id: message.authorID, name: mine ? myName : theirs, presence: .online))
+        }
         appendLine(name: mine ? myName : theirs, color: mine ? Self.myColor : Self.buddyColor, message: message)
         return true
     }

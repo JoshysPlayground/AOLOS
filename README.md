@@ -143,6 +143,15 @@ The bridge script is `Scripts.discordBridge` in
 the web client's internal stores, which Discord can change in any release.
 When it cannot find them the Buddy List says so.
 
+## Chat Rooms
+
+Chat Rooms opens from the People button, the Community menu or the keyword
+`chat rooms`. Your Discord servers are the categories and their text channels
+are the rooms. Rooms with unread messages are bold. Enter a room to read its
+recent history and chat. The list on the right shows who has spoken. Rooms do
+not play sounds, but a room window turns orange when a message arrives while
+it is in the background.
+
 ## Passwords
 
 Sign on asks for Touch ID or the Mac password. Turn this off in Settings.

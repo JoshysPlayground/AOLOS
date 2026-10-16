@@ -323,6 +323,8 @@ final class Session {
             openRadio()
         } else if ["buddy list", "buddylist", "buddies", "aim"].contains(key) {
             openBuddyList()
+        } else if ["chat rooms", "chatrooms", "rooms", "find a chat", "people connection"].contains(key) {
+            openChatRooms()
         } else if key == "spotify web" {
             openService("spotify", web: true)
         } else if let target = config.keywords[key] {
@@ -446,6 +448,7 @@ final class Session {
             button("People", "people", "person.2.fill", blue) { [weak self] b in
                 let menu = NSMenu()
                 menu.addItem(ActionItem("Buddy List") { [weak self] in self?.openBuddyList() })
+                menu.addItem(ActionItem("Chat Rooms") { [weak self] in self?.openChatRooms() })
                 menu.addItem(ActionItem("People Connection") { [weak self] in self?.openService("chat") })
                 menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
             },

@@ -10,6 +10,13 @@ extension Session {
         }
         discord.onMessage = { [weak self] userId, message in self?.receiveIM(from: userId, message) }
         discord.onGroupMessage = { [weak self] chat, message in self?.receiveGroupMessage(chat, message) }
+        discord.onRoomMessage = { [weak self] channelId, message in self?.receiveRoomMessage(channelId, message) }
+        discord.onReady = { [weak self] in
+            guard let self else { return }
+            for (id, window) in self.imWindows where (window.content as? InstantMessageView)?.tracksSpeakers == true {
+                self.discord.watch(id, true)
+            }
+        }
     }
 
     var hiddenBuddyIDs: Set<String> { Set(config.hiddenBuddies) }
@@ -139,6 +146,73 @@ extension Session {
             case .failure(let error):
                 view.appendNotice(error.localizedDescription)
             }
+        }
+    }
+
+    func openChatRooms() {
+        guard signedOn else { return }
+        ensureDiscordPane()
+        if let w = desktop.windows.first(where: { $0.content is ChatRoomsView }) {
+            desktop.activate(w)
+            return
+        }
+        let view = ChatRoomsView()
+        let window = MDIWindow(title: "People Connection - Find a Chat",
+                               icon: Icons.symbol("bubble.left.and.bubble.right.fill", colors: [.white]), content: view)
+        window.minSize = NSSize(width: 480, height: 360)
+        window.focusView = view.serverList
+        view.onPickServer = { [weak self, weak view] server in
+            self?.discord.rooms(in: server.id) { result in
+                switch result {
+                case .success(let rooms): view?.showRooms(rooms)
+                case .failure(let error): view?.showRooms([], error: error.localizedDescription)
+                }
+            }
+        }
+        view.onEnter = { [weak self] server, room in self?.openChatRoom(room, in: server) }
+        view.onRefresh = { [weak self, weak view] in self?.loadServers(into: view) }
+        desktop.add(window, size: NSSize(width: 640, height: 480), centered: true)
+        loadServers(into: view)
+    }
+
+    private func loadServers(into view: ChatRoomsView?) {
+        discord.servers { [weak view] result in
+            switch result {
+            case .success(let servers):
+                view?.showServers(servers)
+                view?.setStatus("\(servers.count) servers")
+            case .failure(let error):
+                view?.setStatus(error.localizedDescription)
+            }
+        }
+    }
+
+    func openChatRoom(_ room: ChatRoom, in server: ChatServer) {
+        guard signedOn, let me = discord.me else { return }
+        if let w = imWindows[room.id], w.superview != nil {
+            desktop.activate(w)
+            return
+        }
+        let stub = Buddy(id: room.id, name: "#\(room.name)", presence: .online)
+        let view = InstantMessageView(buddy: stub, myID: me.id, myName: me.name, isGroup: true)
+        view.tracksSpeakers = true
+        let window = MDIWindow(title: "#\(room.name) - \(server.name)",
+                               icon: Icons.symbol("bubble.left.and.bubble.right.fill", colors: [.white]), content: view)
+        window.minSize = NSSize(width: 460, height: 340)
+        openConversation(view, in: window, target: .channel(room.id), size: NSSize(width: 700, height: 500))
+        discord.watch(room.id, true)
+        let close = window.onClose
+        window.onClose = { [weak self] in
+            close?()
+            self?.discord.watch(room.id, false)
+        }
+    }
+
+    private func receiveRoomMessage(_ channelId: String, _ message: DirectMessage) {
+        guard let w = imWindows[channelId], let view = w.content as? InstantMessageView, view.append(message) else { return }
+        if !w.isActive, message.authorID != discord.me?.id {
+            w.attention = true
+            desktop.windowsChanged()
         }
     }
 

@@ -27,6 +27,8 @@ final class DiscordBridge {
     var onBuddyChange: ((Buddy, BuddyChange) -> Void)?
     var onMessage: ((String, DirectMessage) -> Void)?
     var onGroupMessage: ((GroupChat, DirectMessage) -> Void)?
+    var onRoomMessage: ((String, DirectMessage) -> Void)?
+    var onReady: (() -> Void)?
 
     static let recentInterval: TimeInterval = 8
 
@@ -75,6 +77,7 @@ final class DiscordBridge {
             }
             state = .ready
             onChange?()
+            onReady?()
         case "discord.friends":
             state = .ready
             apply(body)
@@ -92,6 +95,10 @@ final class DiscordBridge {
                   let message = DirectMessage(json: json) else { return }
             if let i = groups.firstIndex(where: { $0.id == chat.id }) { groups[i] = chat } else { groups.insert(chat, at: 0) }
             onGroupMessage?(chat, message)
+        case "discord.roomMessage":
+            guard let channelId = body["channelId"] as? String, let json = body["message"] as? [String: Any],
+                  let message = DirectMessage(json: json) else { return }
+            onRoomMessage?(channelId, message)
         case "discord.signedOff":
             buddies = [:]
             me = nil
@@ -173,6 +180,23 @@ final class DiscordBridge {
              ["target": target.scriptValue, "content": text, "files": payload]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
+    }
+
+    func servers(completion: @escaping @MainActor (Result<[ChatServer], Error>) -> Void) {
+        call("return window.__aolosDiscord.servers();", [:]) { result in
+            completion(result.map { ($0 as? [[String: Any]] ?? []).compactMap(ChatServer.init(json:)) })
+        }
+    }
+
+    func rooms(in serverId: String, completion: @escaping @MainActor (Result<[ChatRoom], Error>) -> Void) {
+        call("return window.__aolosDiscord.rooms(guildId);", ["guildId": serverId]) { result in
+            completion(result.map { ($0 as? [[String: Any]] ?? []).compactMap(ChatRoom.init(json:)) })
+        }
+    }
+
+    /// Live messages from a server channel only arrive while it is watched.
+    func watch(_ channelId: String, _ on: Bool) {
+        call(on ? "return window.__aolosDiscord.watch(c);" : "return window.__aolosDiscord.unwatch(c);", ["c": channelId]) { _ in }
     }
 
     func openInDiscord(_ userId: String) {

@@ -88,6 +88,7 @@ enum MainMenu {
             },
             item("Community") { [weak session] m in
                 m.addItem(ActionItem("Buddy List (Discord)") { session?.openBuddyList() })
+                m.addItem(ActionItem("Chat Rooms (Discord)") { session?.openChatRooms() })
                 m.addItem(ActionItem("Chat (Discord)") { session?.openService("chat") })
                 m.addItem(ActionItem("Instant Message (Slack)") { session?.openService("im") })
             },

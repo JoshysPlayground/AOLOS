@@ -121,3 +121,14 @@ final class GroupChatTests: XCTestCase {
         XCTAssertEqual(message.authorName, "Aesh")
     }
 }
+
+final class ChatRoomTests: XCTestCase {
+    func testServerAndRoomParsing() throws {
+        let server = try XCTUnwrap(ChatServer(json: ["id": "1", "name": "CEXI", "icon": "https://cdn.discordapp.com/icons/1/a.png"]))
+        XCTAssertEqual(server.iconURL?.host, "cdn.discordapp.com")
+        let room = try XCTUnwrap(ChatRoom(json: ["id": "2", "name": "general", "category": "Text", "unread": true]))
+        XCTAssertTrue(room.unread)
+        XCTAssertEqual(room.category, "Text")
+        XCTAssertNil(ChatRoom(json: ["name": "no id"]))
+    }
+}

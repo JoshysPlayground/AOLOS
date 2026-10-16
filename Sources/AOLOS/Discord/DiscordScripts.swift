@@ -89,6 +89,10 @@ extension Scripts {
         // The REST wrapper the client sends uploads through. It takes `attachments` and `fields` options.
         http: () => find((e) => typeof e.get === 'function' && typeof e.post === 'function' && typeof e.put === 'function'
                               && typeof e.patch === 'function' && typeof e.del === 'function' && !e.Request),
+        guilds: () => store('GuildStore'),
+        sortedGuilds: () => store('SortedGuildStore'),
+        guildChannels: () => store('GuildChannelStore'),
+        readState: () => store('ReadStateStore'),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
       const missing = (keys) => keys.filter((k) => !S[k]);
@@ -309,6 +313,10 @@ extension Scripts {
             post({ type: 'discord.groupMessage', group: group(channel), message: message(a.message) });
             return;
           }
+          if (watched.has(String(a.channelId))) {
+            post({ type: 'discord.roomMessage', channelId: String(a.channelId), message: message(a.message) });
+            return;
+          }
           const userId = recipient(channel);
           if (!userId) return;
           post({ type: 'discord.message', userId, buddy: friend(userId), message: message(a.message) });
@@ -317,8 +325,62 @@ extension Scripts {
         S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
       };
 
+      // Server channels with an open chat room window. Only these forward live messages.
+      const watched = new Set();
+      const optional = (k) => { try { return need(k); } catch (e) { return null; } };
+
+      const servers = () => {
+        const gs = need('guilds');
+        const all = gs.getGuilds ? gs.getGuilds() : {};
+        const list = Array.isArray(all) ? all : Object.values(all || {});
+        let order = [];
+        try {
+          const sorted = optional('sortedGuilds');
+          if (sorted && typeof sorted.getFlattenedGuildIds === 'function') order = sorted.getFlattenedGuildIds();
+        } catch (e) {}
+        const rank = new Map(order.map((id, i) => [String(id), i]));
+        const pos = (id) => (rank.has(id) ? rank.get(id) : 1e9);
+        return list
+          .map((g) => ({ id: String(g.id), name: String(g.name || g.id),
+                         icon: g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png?size=64` : '' }))
+          .sort((a, b) => pos(a.id) - pos(b.id) || a.name.localeCompare(b.name));
+      };
+
+      // Text and announcement channels the account can see, in the server's sidebar order.
+      const rooms = (guildId) => {
+        let list = [];
+        const gc = optional('guildChannels');
+        try {
+          const r = gc && typeof gc.getChannels === 'function' ? gc.getChannels(guildId) : null;
+          if (r && Array.isArray(r.SELECTABLE)) list = r.SELECTABLE.map((x) => x.channel || x);
+        } catch (e) {}
+        if (!list.length) {
+          try {
+            const all = need('channels').getMutableGuildChannelsForGuild(guildId);
+            list = Object.values(all || {}).sort((a, b) => (a.position || 0) - (b.position || 0));
+          } catch (e) {}
+        }
+        const rs = optional('readState');
+        return list
+          .filter((c) => c && (c.type === 0 || c.type === 5))
+          .map((c) => {
+            let category = '';
+            try {
+              const parent = c.parent_id && S.channels.getChannel(c.parent_id);
+              category = parent ? String(parent.name || '') : '';
+            } catch (e) {}
+            let unread = false;
+            try { unread = !!(rs && typeof rs.hasUnread === 'function' && rs.hasUnread(c.id)); } catch (e) {}
+            return { id: String(c.id), name: String(c.name || c.id), category, unread };
+          });
+      };
+
       window.__aolosDiscord = {
         snapshot: () => snapshot(true),
+        servers: () => servers(),
+        rooms: (guildId) => rooms(String(guildId)),
+        watch: (channelId) => { watched.add(String(channelId)); return true; },
+        unwatch: (channelId) => { watched.delete(String(channelId)); return true; },
         history: async (userId, limit) => {
           const cid = await channelFor(userId);
           if (loaded(cid).length < limit && S.actions && typeof S.actions.fetchMessages === 'function') {

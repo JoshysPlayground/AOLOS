@@ -153,6 +153,36 @@ struct GroupChat: Equatable {
     var onlineCount: Int { members.filter(\.isOnline).count }
 }
 
+/// A Discord server, shown as a chat room category.
+struct ChatServer: Equatable {
+    let id: String
+    let name: String
+    let iconURL: URL?
+
+    init?(json: [String: Any]) {
+        guard let id = json["id"] as? String, !id.isEmpty else { return nil }
+        self.id = id
+        name = json["name"] as? String ?? id
+        iconURL = (json["icon"] as? String).flatMap(URL.init(string:))
+    }
+}
+
+/// A text channel in a server, shown as a chat room.
+struct ChatRoom: Equatable {
+    let id: String
+    let name: String
+    let category: String
+    let unread: Bool
+
+    init?(json: [String: Any]) {
+        guard let id = json["id"] as? String, !id.isEmpty else { return nil }
+        self.id = id
+        name = json["name"] as? String ?? id
+        category = json["category"] as? String ?? ""
+        unread = json["unread"] as? Bool ?? false
+    }
+}
+
 /// Who a message goes to: one person, or a group chat channel.
 enum ChatTarget: Equatable {
     case user(String)
