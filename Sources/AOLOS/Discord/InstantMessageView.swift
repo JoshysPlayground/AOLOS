@@ -206,6 +206,8 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         didSet { formatBar.replyingTo = replyTo.map { name(for: $0) } }
     }
     private var messages: [String: DirectMessage] = [:]
+    /// Live messages that arrive while history loads wait here, so they land after the history in time order.
+    private var waiting: [DirectMessage]?
 
     let buddyID: String
     private(set) var buddyName: String
@@ -347,8 +349,23 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     }
 
     /// Appends a message once. Discord repeats a message in history and in live events.
+    func beginHistory() {
+        waiting = []
+    }
+
+    func finishHistory(_ history: [DirectMessage]) {
+        let live = waiting ?? []
+        waiting = nil
+        for message in (history + live).sorted(by: { $0.date < $1.date }) { append(message) }
+    }
+
     @discardableResult
     func append(_ message: DirectMessage) -> Bool {
+        if waiting != nil {
+            guard !shownIDs.contains(message.id), !(waiting ?? []).contains(where: { $0.id == message.id }) else { return false }
+            waiting?.append(message)
+            return true
+        }
         guard shownIDs.insert(message.id).inserted else { return false }
         messages[message.id] = message
         if channelID == nil, !message.channelID.isEmpty { channelID = message.channelID }

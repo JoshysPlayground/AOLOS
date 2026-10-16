@@ -180,13 +180,23 @@ extension Session {
         }
         desktop.add(window, size: size)
 
-        discord.history(with: target) { [weak view] result in
+        // History comes from Discord's API so a channel the client never loaded is current. The client's own store
+        // is the fallback.
+        view.beginHistory()
+        discord.latest(in: target, limit: 30) { [weak self, weak view] result in
             guard let view else { return }
-            switch result {
-            case .success(let messages):
-                messages.sorted { $0.date < $1.date }.forEach { view.append($0) }
-            case .failure(let error):
-                view.appendNotice(error.localizedDescription)
+            if case .success(let messages) = result {
+                view.finishHistory(messages)
+                return
+            }
+            self?.discord.history(with: target) { [weak view] result in
+                switch result {
+                case .success(let messages):
+                    view?.finishHistory(messages)
+                case .failure(let error):
+                    view?.finishHistory([])
+                    view?.appendNotice(error.localizedDescription)
+                }
             }
         }
     }
