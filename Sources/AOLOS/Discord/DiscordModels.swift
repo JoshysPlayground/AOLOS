@@ -103,6 +103,39 @@ struct MessageMedia: Equatable {
     }
 }
 
+/// The message a reply quotes.
+struct MessageReply: Equatable {
+    let id: String
+    let authorName: String
+    let text: String
+
+    init?(json: [String: Any]?) {
+        guard let json, let id = json["id"] as? String else { return nil }
+        self.id = id
+        authorName = json["authorName"] as? String ?? ""
+        text = json["text"] as? String ?? ""
+    }
+}
+
+/// One emoji reaction and how many people used it.
+struct MessageReaction: Equatable {
+    let name: String
+    let count: Int
+    /// True when you reacted with it.
+    let mine: Bool
+
+    init?(json: [String: Any]) {
+        guard let name = json["name"] as? String else { return nil }
+        self.name = name
+        count = (json["count"] as? NSNumber)?.intValue ?? 1
+        mine = json["me"] as? Bool ?? false
+    }
+
+    static func parse(_ list: Any?) -> [MessageReaction] {
+        (list as? [[String: Any]] ?? []).compactMap(MessageReaction.init(json:))
+    }
+}
+
 /// One direct message as the bridge reports it.
 struct DirectMessage: Equatable {
     let id: String
@@ -111,6 +144,9 @@ struct DirectMessage: Equatable {
     let date: Date
     /// The author's display name. Group chats need it because the author varies.
     var authorName = ""
+    var channelID = ""
+    var reply: MessageReply?
+    var reactions: [MessageReaction] = []
     var images: [MessageMedia] = []
     var files: [MessageMedia] = []
 
@@ -127,6 +163,9 @@ struct DirectMessage: Equatable {
         self.init(id: id, authorID: json["authorID"] as? String ?? "", text: json["text"] as? String ?? "",
                   date: Date(timeIntervalSince1970: millis / 1000))
         authorName = json["authorName"] as? String ?? ""
+        channelID = json["channelID"] as? String ?? ""
+        reply = MessageReply(json: json["reply"] as? [String: Any])
+        reactions = MessageReaction.parse(json["reactions"])
         images = (json["images"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
         files = (json["files"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
     }
@@ -173,6 +212,11 @@ struct ChatRoom: Equatable {
     let name: String
     let category: String
     let unread: Bool
+    let voice: Bool
+    /// Who is in a voice channel right now.
+    let people: [String]
+    /// True for the voice channel you are connected to.
+    let joined: Bool
 
     init?(json: [String: Any]) {
         guard let id = json["id"] as? String, !id.isEmpty else { return nil }
@@ -180,6 +224,9 @@ struct ChatRoom: Equatable {
         name = json["name"] as? String ?? id
         category = json["category"] as? String ?? ""
         unread = json["unread"] as? Bool ?? false
+        voice = json["voice"] as? Bool ?? false
+        people = json["people"] as? [String] ?? []
+        joined = json["joined"] as? Bool ?? false
     }
 }
 

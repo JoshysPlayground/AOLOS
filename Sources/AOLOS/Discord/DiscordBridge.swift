@@ -29,6 +29,8 @@ final class DiscordBridge {
     var onGroupMessage: ((GroupChat, DirectMessage) -> Void)?
     var onRoomMessage: ((String, DirectMessage) -> Void)?
     var onReady: (() -> Void)?
+    var onReactions: ((String, String, [MessageReaction]) -> Void)?
+    var onVoiceChange: (() -> Void)?
 
     static let recentInterval: TimeInterval = 8
 
@@ -99,6 +101,11 @@ final class DiscordBridge {
             guard let channelId = body["channelId"] as? String, let json = body["message"] as? [String: Any],
                   let message = DirectMessage(json: json) else { return }
             onRoomMessage?(channelId, message)
+        case "discord.reactions":
+            guard let channelId = body["channelId"] as? String, let messageId = body["messageId"] as? String else { return }
+            onReactions?(channelId, messageId, MessageReaction.parse(body["reactions"]))
+        case "discord.voice":
+            onVoiceChange?()
         case "discord.signedOff":
             buddies = [:]
             me = nil
@@ -159,9 +166,10 @@ final class DiscordBridge {
         }
     }
 
-    func send(_ text: String, to target: ChatTarget, completion: @escaping @MainActor (Error?) -> Void) {
-        call("return await window.__aolosDiscord.send(target, content);",
-             ["target": target.scriptValue, "content": text]) { result in
+    func send(_ text: String, to target: ChatTarget, replyTo: String? = nil,
+              completion: @escaping @MainActor (Error?) -> Void) {
+        call("return await window.__aolosDiscord.send(target, content, replyTo);",
+             ["target": target.scriptValue, "content": text, "replyTo": replyTo ?? NSNull()]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
     }
@@ -173,13 +181,28 @@ final class DiscordBridge {
         let data: Data
     }
 
-    func send(_ text: String, files: [Attachment], to target: ChatTarget, completion: @escaping @MainActor (Error?) -> Void) {
-        guard !files.isEmpty else { send(text, to: target, completion: completion); return }
+    func send(_ text: String, files: [Attachment], to target: ChatTarget, replyTo: String? = nil,
+              completion: @escaping @MainActor (Error?) -> Void) {
+        guard !files.isEmpty else { send(text, to: target, replyTo: replyTo, completion: completion); return }
         let payload = files.map { ["name": $0.name, "type": $0.type, "data": $0.data.base64EncodedString()] }
-        call("return await window.__aolosDiscord.upload(target, content, files);",
-             ["target": target.scriptValue, "content": text, "files": payload]) { result in
+        call("return await window.__aolosDiscord.upload(target, content, files, replyTo);",
+             ["target": target.scriptValue, "content": text, "files": payload, "replyTo": replyTo ?? NSNull()]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
+    }
+
+    /// The newest messages from Discord's API, to fill gaps the live events missed.
+    func latest(in target: ChatTarget, limit: Int = 20,
+                completion: @escaping @MainActor (Result<[DirectMessage], Error>) -> Void) {
+        call("return await window.__aolosDiscord.latest(target, limit);",
+             ["target": target.scriptValue, "limit": limit]) { result in
+            completion(result.map { ($0 as? [[String: Any]] ?? []).compactMap(DirectMessage.init(json:)) })
+        }
+    }
+
+    /// Connects the Discord window to a voice channel, or disconnects with nil.
+    func joinVoice(_ channelId: String?) {
+        call("return window.__aolosDiscord.joinVoice(c);", ["c": channelId ?? NSNull()]) { _ in }
     }
 
     func servers(completion: @escaping @MainActor (Result<[ChatServer], Error>) -> Void) {

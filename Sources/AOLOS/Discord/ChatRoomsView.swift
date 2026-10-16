@@ -10,6 +10,8 @@ final class PickList: FlippedView {
         var iconURL: URL?
         var bold = false
         var isHeader = false
+        /// A non-selectable indented line, such as a person in a voice channel.
+        var isNote = false
     }
 
     var items: [Item] = [] { didSet { resize(); needsDisplay = true } }
@@ -20,7 +22,7 @@ final class PickList: FlippedView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    var selected: Item? { items.first { $0.id == selectedID && !$0.isHeader } }
+    var selected: Item? { items.first { $0.id == selectedID && !$0.isHeader && !$0.isNote } }
 
     func select(_ id: String?) {
         selectedID = id
@@ -48,6 +50,11 @@ final class PickList: FlippedView {
                          in: rect.insetBy(dx: 6, dy: 0))
                 continue
             }
+            if item.isNote {
+                drawText(item.title, font: Theme.ui(11), color: Theme.mutedText,
+                         in: NSRect(x: 40, y: rect.minY, width: rect.width - 46, height: rect.height))
+                continue
+            }
             let isSelected = item.id == selectedID
             if isSelected {
                 Theme.hover.setFill()
@@ -72,7 +79,7 @@ final class PickList: FlippedView {
         window?.makeFirstResponder(self)
         let p = convert(event.locationInWindow, from: nil)
         let i = Int((p.y - 2) / Self.rowHeight)
-        guard items.indices.contains(i), !items[i].isHeader else { return }
+        guard items.indices.contains(i), !items[i].isHeader, !items[i].isNote else { return }
         selectedID = items[i].id
         needsDisplay = true
         onSelect?(items[i])
@@ -80,7 +87,7 @@ final class PickList: FlippedView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let rows = items.filter { !$0.isHeader }
+        let rows = items.filter { !$0.isHeader && !$0.isNote }
         let current = rows.firstIndex { $0.id == selectedID }
         switch event.keyCode {
         case 36, 76:
@@ -102,6 +109,7 @@ final class ChatRoomsView: FlippedView {
     var onPickServer: ((ChatServer) -> Void)?
     var onEnter: ((ChatServer, ChatRoom) -> Void)?
     var onRefresh: (() -> Void)?
+    var onLeaveVoice: (() -> Void)?
 
     private let header = GradientView(colors: [Theme.rgb(74, 138, 222), Theme.rgb(30, 88, 184)], bottomLine: Theme.rgb(18, 58, 140))
     private let title = NSTextField(labelWithString: "Find a Chat")
@@ -114,6 +122,7 @@ final class ChatRoomsView: FlippedView {
     private let buttons = ButtonBar()
     private let enter = ChromeButton(title: "Enter Chat", symbol: "bubble.left.and.bubble.right.fill", prominent: true)
     private let refresh = ChromeButton(title: "Refresh", symbol: "arrow.clockwise")
+    private let leave = ChromeButton(title: "Leave Voice", symbol: "phone.down.fill")
     private var servers: [ChatServer] = []
     private var rooms: [ChatRoom] = []
     private var currentServer: ChatServer?
@@ -140,9 +149,15 @@ final class ChatRoomsView: FlippedView {
             self.onPickServer?(server)
         }
         roomList.onOpen = { [weak self] _ in self?.enterSelected() }
+        roomList.onSelect = { [weak self] item in
+            let voice = self?.rooms.first { $0.id == item.id }?.voice == true
+            self?.enter.title = voice ? "Join Voice" : "Enter Chat"
+            self?.buttons.needsLayout = true
+        }
+        leave.action = { [weak self] in self?.onLeaveVoice?() }
         enter.action = { [weak self] in self?.enterSelected() }
         refresh.action = { [weak self] in self?.onRefresh?() }
-        buttons.buttons = [enter, refresh]
+        buttons.buttons = [enter, refresh, leave]
         [header, serverLabel, roomLabel, serverScroll, roomScroll, buttons].forEach(addSubview)
     }
 
@@ -198,10 +213,26 @@ final class ChatRoomsView: FlippedView {
                 category = room.category
                 if !room.category.isEmpty { items.append(PickList.Item(id: "cat-\(room.id)", title: room.category, isHeader: true)) }
             }
-            items.append(PickList.Item(id: room.id, title: "# \(room.name)", bold: room.unread))
+            if room.voice {
+                let title = room.joined ? "\u{1F50A} \(room.name) (connected)" : "\u{1F50A} \(room.name)"
+                items.append(PickList.Item(id: room.id, title: title, bold: room.joined))
+                for person in room.people {
+                    items.append(PickList.Item(id: "\(room.id)-\(person)", title: person, isNote: true))
+                }
+            } else {
+                items.append(PickList.Item(id: room.id, title: "# \(room.name)", bold: room.unread))
+            }
         }
         if items.isEmpty { items = [PickList.Item(id: "_", title: "No rooms you can read", isHeader: true)] }
+        let selected = roomList.selectedID
         roomList.items = items
+        roomList.select(selected)
+    }
+
+    /// Reloads the rooms of the selected server, keeping the selection. Voice channel members change often.
+    func reloadRooms() {
+        guard let server = currentServer else { return }
+        onPickServer?(server)
     }
 
     func setStatus(_ text: String) {

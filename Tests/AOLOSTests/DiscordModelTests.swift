@@ -132,3 +132,25 @@ final class ChatRoomTests: XCTestCase {
         XCTAssertNil(ChatRoom(json: ["name": "no id"]))
     }
 }
+
+final class ReplyReactionTests: XCTestCase {
+    func testReplyAndReactionParsing() throws {
+        let message = try XCTUnwrap(DirectMessage(json: [
+            "id": "5", "channelID": "c1", "authorID": "2", "text": "yes",
+            "reply": ["id": "4", "authorName": "Ricon", "text": "Right?"],
+            "reactions": [["name": "\u{1F44D}", "count": 3, "me": true], ["name": ":kekw:", "count": 1]],
+        ]))
+        XCTAssertEqual(message.channelID, "c1")
+        XCTAssertEqual(message.reply?.authorName, "Ricon")
+        XCTAssertEqual(message.reactions.map(\.count), [3, 1])
+        XCTAssertTrue(message.reactions[0].mine)
+        XCTAssertNil(try XCTUnwrap(DirectMessage(json: ["id": "6"])).reply)
+    }
+
+    func testVoiceRoomParsing() throws {
+        let room = try XCTUnwrap(ChatRoom(json: ["id": "9", "name": "General", "voice": true, "people": ["Aesh"], "joined": true]))
+        XCTAssertTrue(room.voice)
+        XCTAssertEqual(room.people, ["Aesh"])
+        XCTAssertTrue(room.joined)
+    }
+}

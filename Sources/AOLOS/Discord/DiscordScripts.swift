@@ -93,6 +93,9 @@ extension Scripts {
         sortedGuilds: () => store('SortedGuildStore'),
         guildChannels: () => store('GuildChannelStore'),
         readState: () => store('ReadStateStore'),
+        voiceStates: () => store('VoiceStateStore'),
+        selectedChannels: () => store('SelectedChannelStore'),
+        voiceActions: () => find((e) => typeof e.selectVoiceChannel === 'function'),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
       const missing = (keys) => keys.filter((k) => !S[k]);
@@ -259,12 +262,40 @@ extension Scripts {
           const t = new Date(m.timestamp && m.timestamp.valueOf ? m.timestamp.valueOf() : m.timestamp).getTime();
           if (!isNaN(t)) time = t;
         } catch (e) {}
-        const author = m.author || {};
         const { images, files } = media(m);
+        const author = m.author || {};
         const authorID = String(author.id || '');
-        let authorName = author.global_name || author.globalName || author.username || '';
-        try { if (authorID) authorName = displayName(authorID) || authorName; } catch (e) {}
-        return { id: String(m.id), authorID, authorName, text: text(m), time, images, files };
+        const channelID = String(m.channel_id || m.channelId || '');
+        return { id: String(m.id), channelID, authorID, authorName: authorName(author), text: text(m), time, images, files,
+                 reply: reply(m, channelID), reactions: (m.reactions || []).map(reaction) };
+      };
+
+      const authorName = (author) => {
+        const id = String(author.id || '');
+        let name = author.global_name || author.globalName || author.username || '';
+        try { if (id) name = displayName(id) || name; } catch (e) {}
+        return name;
+      };
+
+      // The quoted message a reply points at. Gateway events embed it and stored messages reference it by ID.
+      const reply = (m, channelID) => {
+        const ref = m.message_reference || m.messageReference;
+        const refID = ref && (ref.message_id || ref.messageId);
+        let original = m.referenced_message || m.referencedMessage || null;
+        if (!original && refID) {
+          try { original = need('messages').getMessage(channelID, refID); } catch (e) {}
+        }
+        if (original) {
+          return { id: String(original.id), authorName: authorName(original.author || {}), text: text(original).slice(0, 140) };
+        }
+        return refID ? { id: String(refID), authorName: '', text: 'Original message not loaded' } : null;
+      };
+
+      const reaction = (r) => {
+        const e = r.emoji || {};
+        const name = e.id ? `:${e.name}:` : (e.name || '?');
+        const count = r.count || (r.count_details ? (r.count_details.normal || 0) + (r.count_details.burst || 0) : 1);
+        return { name, count, me: !!(r.me || r.me_burst) };
       };
 
       const recipient = (channel) => {
@@ -321,6 +352,24 @@ extension Scripts {
           if (!userId) return;
           post({ type: 'discord.message', userId, buddy: friend(userId), message: message(a.message) });
         });
+        const reactions = (a) => setTimeout(() => {
+          try {
+            const cid = String(a.channelId || '');
+            const channel = S.channels && S.channels.getChannel(cid);
+            if (!channel || !(channel.type === 1 || channel.type === 3 || watched.has(cid))) return;
+            const m = need('messages').getMessage(cid, a.messageId);
+            if (!m) return;
+            post({ type: 'discord.reactions', channelId: cid, messageId: String(a.messageId),
+                   reactions: (m.reactions || []).map(reaction) });
+          } catch (e) {}
+        }, 60);
+        let voiceTimer = null;
+        S.dispatcher.subscribe('VOICE_STATE_UPDATES', () => {
+          if (voiceTimer) return;
+          voiceTimer = setTimeout(() => { voiceTimer = null; post({ type: 'discord.voice' }); }, 500);
+        });
+        ['MESSAGE_REACTION_ADD', 'MESSAGE_REACTION_REMOVE', 'MESSAGE_REACTION_REMOVE_ALL', 'MESSAGE_REACTION_REMOVE_EMOJI']
+          .forEach((t) => S.dispatcher.subscribe(t, reactions));
         S.dispatcher.subscribe('CONNECTION_OPEN', () => setTimeout(() => snapshot(true), 1500));
         S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
       };
@@ -360,10 +409,32 @@ extension Scripts {
             list = Object.values(all || {}).sort((a, b) => (a.position || 0) - (b.position || 0));
           } catch (e) {}
         }
+        if (gc && typeof gc.getChannels === 'function') {
+          try {
+            const r = gc.getChannels(guildId);
+            if (r && Array.isArray(r.VOCAL)) {
+              const vocal = r.VOCAL.map((x) => x.channel || x);
+              const known = new Set(list.map((c) => c && c.id));
+              list = list.concat(vocal.filter((c) => c && !known.has(c.id)));
+            }
+          } catch (e) {}
+        }
         const rs = optional('readState');
+        const vs = optional('voiceStates');
+        const sel = optional('selectedChannels');
+        let joined = null;
+        try { joined = sel && typeof sel.getVoiceChannelId === 'function' ? sel.getVoiceChannelId() : null; } catch (e) {}
+        const people = (cid) => {
+          try {
+            const states = vs.getVoiceStatesForChannel(cid);
+            const list = Array.isArray(states) ? states : Object.values(states || {});
+            return list.map((s) => displayName(String(s.userId || s.user_id || (s.user && s.user.id) || ''))).filter(Boolean);
+          } catch (e) { return []; }
+        };
         return list
-          .filter((c) => c && (c.type === 0 || c.type === 5))
+          .filter((c) => c && (c.type === 0 || c.type === 5 || c.type === 2 || c.type === 13))
           .map((c) => {
+            const voice = c.type === 2 || c.type === 13;
             let category = '';
             try {
               const parent = c.parent_id && S.channels.getChannel(c.parent_id);
@@ -371,7 +442,8 @@ extension Scripts {
             } catch (e) {}
             let unread = false;
             try { unread = !!(rs && typeof rs.hasUnread === 'function' && rs.hasUnread(c.id)); } catch (e) {}
-            return { id: String(c.id), name: String(c.name || c.id), category, unread };
+            return { id: String(c.id), name: String(c.name || c.id), category, unread: !voice && unread, voice,
+                     people: voice ? people(c.id) : [], joined: voice && String(joined) === String(c.id) };
           });
       };
 
@@ -388,13 +460,18 @@ extension Scripts {
           }
           return loaded(cid).slice(-limit).map(message);
         },
-        send: async (userId, content) => {
+        send: async (userId, content, replyTo) => {
           const cid = await channelFor(userId);
+          if (replyTo) {
+            await need('http').post({ url: `/channels/${cid}/messages`,
+                                      body: { content, message_reference: { message_id: String(replyTo) } } });
+            return true;
+          }
           await need('actions').sendMessage(cid, { content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] },
                                       undefined, {});
           return true;
         },
-        upload: async (userId, content, files) => {
+        upload: async (userId, content, files, replyTo) => {
           const cid = await channelFor(userId);
           const attachments = files.map((f, i) => {
             const bin = atob(f.data);
@@ -404,10 +481,18 @@ extension Scripts {
             return { name: `files[${i}]`, file, filename: f.name };
           });
           const payload = { content: content || '', attachments: files.map((f, i) => ({ id: i, filename: f.name })) };
+          if (replyTo) payload.message_reference = { message_id: String(replyTo) };
           await need('http').post({ url: `/channels/${cid}/messages`, attachments,
                                     fields: [{ name: 'payload_json', value: JSON.stringify(payload) }] });
           return true;
         },
+        // The latest messages straight from Discord's API, used to catch anything the live events missed.
+        latest: async (target, limit) => {
+          const cid = await channelFor(target);
+          const res = await need('http').get({ url: `/channels/${cid}/messages`, query: { limit } });
+          return (Array.isArray(res && res.body) ? res.body : []).slice().reverse().map(message);
+        },
+        joinVoice: (channelId) => { need('voiceActions').selectVoiceChannel(channelId ? String(channelId) : null); return true; },
         open: (userId) => { need('privates').openPrivateChannel(userId); return true; },
       };
 

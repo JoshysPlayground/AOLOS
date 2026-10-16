@@ -4,6 +4,13 @@ import AppKit
 final class IMInputView: NSTextView {
     var onSend: (() -> Void)?
     var onFiles: (([DiscordBridge.Attachment]) -> Void)?
+    var onContextMenu: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        return onContextMenu?(index) ?? super.menu(for: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         if isEditable, event.keyCode == 36 || event.keyCode == 76, !event.modifierFlags.contains(.shift) {
@@ -80,6 +87,7 @@ final class IMFormatBar: FlippedView {
     var onWrap: ((String) -> Void)?
     var onClearAttachments: (() -> Void)?
     var attachments: [String] = [] { didSet { needsDisplay = true } }
+    var replyingTo: String? { didSet { needsDisplay = true } }
 
     private var attachmentRect: NSRect {
         let x = 8 + CGFloat(items.count) * 30 + 10
@@ -116,12 +124,16 @@ final class IMFormatBar: FlippedView {
             let size = attributed.size()
             attributed.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
         }
-        if !attachments.isEmpty {
+        var notes: [String] = []
+        if let replyingTo { notes.append("Replying to \(replyingTo)") }
+        if !attachments.isEmpty { notes.append(attachments.joined(separator: ", ")) }
+        if !notes.isEmpty {
             let rect = attachmentRect
-            Icons.symbol("paperclip", size: 11, colors: [Theme.aolBlue])?
+            let symbol = replyingTo == nil ? "paperclip" : "arrowshape.turn.up.left.fill"
+            Icons.symbol(symbol, size: 11, colors: [Theme.aolBlue])?
                 .draw(in: NSRect(x: rect.minX, y: rect.midY - 7, width: 14, height: 14), from: .zero,
                       operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            drawText(attachments.joined(separator: ", ") + "   (click to remove)", font: Theme.ui(11), color: Theme.text,
+            drawText(notes.joined(separator: " + ") + "   (click to cancel)", font: Theme.ui(11), color: Theme.text,
                      in: NSRect(x: rect.minX + 18, y: rect.minY, width: rect.width - 18, height: rect.height))
         }
     }
@@ -130,7 +142,7 @@ final class IMFormatBar: FlippedView {
         let p = convert(event.locationInWindow, from: nil)
         if let i = rects().firstIndex(where: { $0.contains(p) }) {
             onWrap?(items[i].1)
-        } else if !attachments.isEmpty, attachmentRect.contains(p) {
+        } else if !attachments.isEmpty || replyingTo != nil, attachmentRect.contains(p) {
             onClearAttachments?()
         }
     }
@@ -139,6 +151,15 @@ final class IMFormatBar: FlippedView {
 /// The member list on the right of a group chat, like an AIM chat room.
 final class ChatMemberList: FlippedView {
     var members: [Buddy] = [] { didSet { needsDisplay = true } }
+    var onMenu: ((Buddy, NSEvent) -> Void)?
+
+    override func rightMouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let i = Int((p.y - 22) / Self.rowHeight)
+        let sorted = BuddySort.sorted(members)
+        guard p.y >= 22, sorted.indices.contains(i) else { return }
+        onMenu?(sorted[i], event)
+    }
     static let rowHeight: CGFloat = 18
 
     override func draw(_ dirtyRect: NSRect) {
@@ -170,12 +191,21 @@ final class ChatMemberList: FlippedView {
 
 /// An AIM Instant Message window for one Discord conversation: a direct message, or a group chat with a member list.
 final class InstantMessageView: FlippedView, NSTextViewDelegate {
-    var onSend: ((String, [DiscordBridge.Attachment]) -> Void)?
+    var onSend: ((String, [DiscordBridge.Attachment], String?) -> Void)?
     var onInfo: (() -> Void)?
     var onOpenLink: ((URL) -> Void)?
+    /// Opens a one-to-one IM with someone in a group chat or room.
+    var onMessagePerson: ((String, String) -> Void)?
+    /// Where this window sends. Set by Session.
+    var target: ChatTarget?
+    private(set) var channelID: String?
     private var pending: [DiscordBridge.Attachment] = [] {
         didSet { formatBar.attachments = pending.map(\.name) }
     }
+    private var replyTo: DirectMessage? {
+        didSet { formatBar.replyingTo = replyTo.map { name(for: $0) } }
+    }
+    private var messages: [String: DirectMessage] = [:]
 
     let buddyID: String
     private(set) var buddyName: String
@@ -223,7 +253,17 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         input.typingAttributes = [.font: Self.bodyFont, .foregroundColor: Theme.text]
         input.onSend = { [weak self] in self?.sendTapped() }
         formatBar.onWrap = { [weak self] marker in self?.wrap(marker) }
-        formatBar.onClearAttachments = { [weak self] in self?.pending = [] }
+        formatBar.onClearAttachments = { [weak self] in
+            self?.pending = []
+            self?.replyTo = nil
+        }
+        transcript.onContextMenu = { [weak self] index in self?.contextMenu(at: index) }
+        memberList.onMenu = { [weak self] member, event in
+            guard let self, member.id != self.myID else { return }
+            let menu = NSMenu()
+            menu.addItem(ActionItem("Send Instant Message") { [weak self] in self?.onMessagePerson?(member.id, member.name) })
+            NSMenu.popUpContextMenu(menu, with: event, for: self.memberList)
+        }
         transcript.delegate = self
         for view in [input, transcript] {
             view.acceptFileDrops()
@@ -310,6 +350,8 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     @discardableResult
     func append(_ message: DirectMessage) -> Bool {
         guard shownIDs.insert(message.id).inserted else { return false }
+        messages[message.id] = message
+        if channelID == nil, !message.channelID.isEmpty { channelID = message.channelID }
         let mine = message.authorID == myID
         let theirs = message.authorName.isEmpty ? buddyName : message.authorName
         if tracksSpeakers, !message.authorID.isEmpty, !members.contains(where: { $0.id == message.authorID }) {
@@ -336,9 +378,86 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
 
     private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
+    private func name(for message: DirectMessage) -> String {
+        if message.authorID == myID { return myName }
+        return message.authorName.isEmpty ? buddyName : message.authorName
+    }
+
+    private static let smallFont = NSFont(name: "Times New Roman", size: 12) ?? .systemFont(ofSize: 11)
+
+    private func replyLine(_ reply: MessageReply) -> NSAttributedString {
+        let who = reply.authorName.isEmpty ? "" : reply.authorName + ": "
+        let text = reply.text.replacingOccurrences(of: "\n", with: " ")
+        return NSAttributedString(string: "    \u{21B3} \(who)\(text)\n", attributes: [
+            .font: NSFontManager.shared.convert(Self.smallFont, toHaveTrait: .italicFontMask),
+            .foregroundColor: Theme.mutedText,
+        ])
+    }
+
+    /// Reactions sit at the end of the message line, tagged so a later reaction event can replace them.
+    private func reactionText(_ reactions: [MessageReaction], id: String) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for r in reactions {
+            out.append(NSAttributedString(string: "  \(r.name) \(r.count)", attributes: [
+                .font: Self.smallFont,
+                .foregroundColor: r.mine ? Theme.aolBlue : Theme.mutedText,
+            ]))
+        }
+        out.append(NSAttributedString(string: "\n", attributes: [.font: Self.bodyFont]))
+        out.addAttribute(Self.reactionsKey, value: id, range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    private static let reactionsKey = NSAttributedString.Key("AOLOSReactions")
+    private static let messageKey = NSAttributedString.Key("AOLOSMessage")
+
+    func updateReactions(_ messageID: String, _ reactions: [MessageReaction]) {
+        guard let old = messages[messageID], old.reactions != reactions, let storage = transcript.textStorage else { return }
+        var updated = old
+        updated.reactions = reactions
+        messages[messageID] = updated
+        var found: NSRange?
+        storage.enumerateAttribute(Self.reactionsKey, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+            if value as? String == messageID {
+                found = range
+                stop.pointee = true
+            }
+        }
+        guard let range = found else { return }
+        let replacement = NSMutableAttributedString(attributedString: reactionText(reactions, id: messageID))
+        replacement.addAttribute(Self.messageKey, value: messageID, range: NSRange(location: 0, length: replacement.length))
+        storage.replaceCharacters(in: range, with: replacement)
+    }
+
+    private func contextMenu(at index: Int) -> NSMenu? {
+        guard let storage = transcript.textStorage, storage.length > 0 else { return nil }
+        let i = min(max(0, index), storage.length - 1)
+        guard let id = storage.attribute(Self.messageKey, at: i, effectiveRange: nil) as? String,
+              let message = messages[id] else { return nil }
+        let who = name(for: message)
+        let menu = NSMenu()
+        menu.addItem(ActionItem("Reply to \(who)") { [weak self] in
+            self?.replyTo = message
+            self?.window?.makeFirstResponder(self?.input)
+        })
+        menu.addItem(ActionItem("Copy Message") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message.text, forType: .string)
+        })
+        if isGroup, message.authorID != myID, !message.authorID.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(ActionItem("Send Instant Message to \(who)") { [weak self] in
+                self?.onMessagePerson?(message.authorID, who)
+            })
+        }
+        return menu
+    }
+
     private func appendLine(name: String, color: NSColor, message: DirectMessage) {
         let body: [NSAttributedString.Key: Any] = [.font: Self.bodyFont, .foregroundColor: Theme.text]
-        let line = NSMutableAttributedString(string: name, attributes: [.font: Self.nameFont, .foregroundColor: color])
+        let line = NSMutableAttributedString()
+        if let reply = message.reply { line.append(replyLine(reply)) }
+        line.append(NSAttributedString(string: name, attributes: [.font: Self.nameFont, .foregroundColor: color]))
         let text = NSMutableAttributedString(string: ": " + message.text, attributes: body)
         let plain = text.string
         for match in Self.linkDetector?.matches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length)) ?? [] {
@@ -349,7 +468,7 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
             line.append(NSAttributedString(string: " "))
             line.append(NSAttributedString(string: "[\(file.name)]", attributes: body.merging([NSAttributedString.Key.link: file.url as Any]) { $1 }))
         }
-        line.append(NSAttributedString(string: "\n", attributes: body))
+        line.append(reactionText(message.reactions, id: message.id))
         for image in message.images {
             line.append(imageAttachment(image))
             line.append(NSAttributedString(string: "\n", attributes: body))
@@ -358,6 +477,7 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         line.addAttribute(.toolTip, value: formatter.string(from: message.date), range: NSRange(location: 0, length: line.length))
+        line.addAttribute(Self.messageKey, value: message.id, range: NSRange(location: 0, length: line.length))
         add(line)
     }
 
@@ -426,12 +546,13 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     private func sendTapped() {
         let text = input.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pending.isEmpty else { NSSound.beep(); return }
-        onSend?(text, pending)
+        onSend?(text, pending, replyTo?.id)
     }
 
     func didSend() {
         input.string = ""
         pending = []
+        replyTo = nil
     }
 
     func setBusy(_ busy: Bool) {

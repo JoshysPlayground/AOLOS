@@ -152,6 +152,15 @@ recent history and chat. The list on the right shows who has spoken. Rooms do
 not play sounds, but a room window turns orange when a message arrives while
 it is in the background.
 
+Voice channels show with a speaker and the people in them. Join Voice connects
+the Discord window to that channel, and Leave Voice disconnects.
+
+Replies show the message they answer above them. Reactions follow each
+message and update live, with yours in blue. Right click a message to reply to
+it, copy it, or send its author an Instant Message. Right click someone in a
+chat's member list to IM them. Open conversations recheck Discord every 20
+seconds for anything the live connection missed.
+
 ## Passwords
 
 Sign on asks for Touch ID or the Mac password. Turn this off in Settings.

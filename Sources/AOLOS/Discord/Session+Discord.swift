@@ -11,6 +11,13 @@ extension Session {
         discord.onMessage = { [weak self] userId, message in self?.receiveIM(from: userId, message) }
         discord.onGroupMessage = { [weak self] chat, message in self?.receiveGroupMessage(chat, message) }
         discord.onRoomMessage = { [weak self] channelId, message in self?.receiveRoomMessage(channelId, message) }
+        discord.onReactions = { [weak self] channelId, messageId, reactions in
+            self?.conversationView(channelId)?.updateReactions(messageId, reactions)
+        }
+        discord.onVoiceChange = { [weak self] in
+            (self?.desktop.windows.first { $0.content is ChatRoomsView }?.content as? ChatRoomsView)?.reloadRooms()
+        }
+        DiscordSync.start(self)
         discord.onReady = { [weak self] in
             guard let self else { return }
             for (id, window) in self.imWindows where (window.content as? InstantMessageView)?.tracksSpeakers == true {
@@ -117,15 +124,49 @@ extension Session {
     }
 
     /// Shared setup for IM and group chat windows: sending, history and bookkeeping.
+    /// The open IM, group chat or room window showing a Discord channel.
+    func conversationView(_ channelId: String) -> InstantMessageView? {
+        if let view = imWindows[channelId]?.content as? InstantMessageView { return view }
+        return imWindows.values.lazy.compactMap { $0.content as? InstantMessageView }.first { $0.channelID == channelId }
+    }
+
+    /// Fetches the newest messages for every open conversation and adds any that live events missed.
+    func syncConversations() {
+        guard discord.state == .ready else { return }
+        for window in imWindows.values {
+            guard let view = window.content as? InstantMessageView, let target = view.target else { continue }
+            discord.latest(in: target) { [weak self, weak view, weak window] result in
+                guard let self, let view, case .success(let messages) = result else { return }
+                var added = false
+                for message in messages {
+                    if view.append(message) {
+                        added = added || message.authorID != self.discord.me?.id
+                    } else {
+                        view.updateReactions(message.id, message.reactions)
+                    }
+                }
+                if added, let window, !window.isActive {
+                    window.attention = true
+                    self.desktop.windowsChanged()
+                }
+            }
+        }
+    }
+
     private func openConversation(_ view: InstantMessageView, in window: MDIWindow, target: ChatTarget, size: NSSize) {
+        view.target = target
+        view.onMessagePerson = { [weak self] id, name in
+            guard let self else { return }
+            self.openIM(with: self.discord.buddy(id) ?? Buddy(id: id, name: name, presence: .online))
+        }
         window.focusView = view.input
         window.onClose = { [weak self] in self?.imWindows[target.id] = nil }
         imWindows[target.id] = window
         view.onOpenLink = { [weak self] url in self?.openBrowser(url) }
-        view.onSend = { [weak self, weak view] text, files in
+        view.onSend = { [weak self, weak view] text, files, replyTo in
             guard let self, let view else { return }
             view.setBusy(true)
-            self.discord.send(text, files: files, to: target) { [weak view] error in
+            self.discord.send(text, files: files, to: target, replyTo: replyTo) { [weak view] error in
                 view?.setBusy(false)
                 if let error {
                     view?.appendNotice("Message not sent: \(error.localizedDescription)")
@@ -169,7 +210,14 @@ extension Session {
                 }
             }
         }
-        view.onEnter = { [weak self] server, room in self?.openChatRoom(room, in: server) }
+        view.onEnter = { [weak self] server, room in
+            if room.voice {
+                self?.discord.joinVoice(room.id)
+            } else {
+                self?.openChatRoom(room, in: server)
+            }
+        }
+        view.onLeaveVoice = { [weak self] in self?.discord.joinVoice(nil) }
         view.onRefresh = { [weak self, weak view] in self?.loadServers(into: view) }
         desktop.add(window, size: NSSize(width: 640, height: 480), centered: true)
         loadServers(into: view)
