@@ -186,11 +186,28 @@ extension Scripts {
         let s = String(m.content || '');
         s = s.replace(/<@!?(\d+)>/g, (_, id) => '@' + displayName(id));
         s = s.replace(/<a?(:\w+:)\d+>/g, '$1');
-        const files = (m.attachments || []).map((a) => a.filename || a.url).filter(Boolean);
-        if (files.length) s += (s ? '\n' : '') + files.map((f) => `[${f}]`).join(' ');
         if (!s && (m.sticker_items || m.stickerItems || []).length) s = '[sticker]';
-        if (!s && (m.embeds || []).length) s = '[embed]';
         return s;
+      };
+
+      // Raw gateway events use snake_case and store records use camelCase, so read both spellings.
+      const media = (m) => {
+        const images = [];
+        const files = [];
+        for (const a of m.attachments || []) {
+          const type = a.content_type || a.contentType || '';
+          const url = a.proxy_url || a.proxyURL || a.url;
+          if (!url) continue;
+          const item = { url, name: a.filename || 'file', width: a.width || 0, height: a.height || 0 };
+          (/^image\//.test(type) || /\.(png|jpe?g|gif|webp)$/i.test(item.name) ? images : files).push(item);
+        }
+        for (const e of m.embeds || []) {
+          if (e.type !== 'image' && e.type !== 'gifv') continue;
+          const img = e.image || e.thumbnail;
+          const url = img && (img.proxy_url || img.proxyURL || img.url);
+          if (url) images.push({ url, name: '', width: img.width || 0, height: img.height || 0 });
+        }
+        return { images, files };
       };
 
       const message = (m) => {
@@ -200,7 +217,8 @@ extension Scripts {
           if (!isNaN(t)) time = t;
         } catch (e) {}
         const author = m.author || {};
-        return { id: String(m.id), authorID: String(author.id || ''), text: text(m), time };
+        const { images, files } = media(m);
+        return { id: String(m.id), authorID: String(author.id || ''), text: text(m), time, images, files };
       };
 
       const recipient = (channel) => {

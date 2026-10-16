@@ -80,12 +80,37 @@ enum BuddyChange: Equatable {
     }
 }
 
+/// An image or file attached to a direct message.
+struct MessageMedia: Equatable {
+    let url: URL
+    let name: String
+    let size: CGSize
+
+    init?(json: [String: Any]) {
+        guard let string = json["url"] as? String, let url = URL(string: string),
+              ["https", "http"].contains(url.scheme ?? "") else { return nil }
+        self.url = url
+        name = json["name"] as? String ?? ""
+        size = CGSize(width: (json["width"] as? NSNumber)?.doubleValue ?? 0,
+                      height: (json["height"] as? NSNumber)?.doubleValue ?? 0)
+    }
+
+    /// Fits the image inside the transcript, never scaling it up.
+    static func displaySize(for size: CGSize, maxWidth: CGFloat = 260, maxHeight: CGFloat = 220) -> CGSize {
+        guard size.width > 0, size.height > 0 else { return CGSize(width: 160, height: 120) }
+        let scale = min(1, maxWidth / size.width, maxHeight / size.height)
+        return CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+    }
+}
+
 /// One direct message as the bridge reports it.
 struct DirectMessage: Equatable {
     let id: String
     let authorID: String
     let text: String
     let date: Date
+    var images: [MessageMedia] = []
+    var files: [MessageMedia] = []
 
     init(id: String, authorID: String, text: String, date: Date) {
         self.id = id
@@ -99,6 +124,8 @@ struct DirectMessage: Equatable {
         let millis = (json["time"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
         self.init(id: id, authorID: json["authorID"] as? String ?? "", text: json["text"] as? String ?? "",
                   date: Date(timeIntervalSince1970: millis / 1000))
+        images = (json["images"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
+        files = (json["files"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
     }
 }
 

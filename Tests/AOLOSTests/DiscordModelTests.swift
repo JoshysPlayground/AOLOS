@@ -79,3 +79,22 @@ final class RecentBuddiesTests: XCTestCase {
         XCTAssertEqual(Set(picked.map(\.id)).count, picked.count)
     }
 }
+
+final class MessageMediaTests: XCTestCase {
+    func testMessageMediaParsing() throws {
+        let message = try XCTUnwrap(DirectMessage(json: [
+            "id": "1", "authorID": "2", "text": "look", "time": 0,
+            "images": [["url": "https://media.discordapp.net/a.png", "name": "a.png", "width": 1000, "height": 500]],
+            "files": [["url": "https://cdn.discordapp.com/b.zip", "name": "b.zip"], ["url": "javascript:alert(1)"]],
+        ]))
+        XCTAssertEqual(message.images.first?.size, CGSize(width: 1000, height: 500))
+        XCTAssertEqual(message.files.map(\.name), ["b.zip"])
+    }
+
+    func testDisplaySizeFitsWithoutUpscaling() {
+        XCTAssertEqual(MessageMedia.displaySize(for: CGSize(width: 1000, height: 500)), CGSize(width: 260, height: 130))
+        XCTAssertEqual(MessageMedia.displaySize(for: CGSize(width: 100, height: 400)), CGSize(width: 55, height: 220))
+        XCTAssertEqual(MessageMedia.displaySize(for: CGSize(width: 50, height: 40)), CGSize(width: 50, height: 40))
+        XCTAssertEqual(MessageMedia.displaySize(for: .zero), CGSize(width: 160, height: 120))
+    }
+}

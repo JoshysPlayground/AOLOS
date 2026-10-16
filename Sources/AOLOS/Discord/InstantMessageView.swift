@@ -137,9 +137,10 @@ final class IMFormatBar: FlippedView {
 }
 
 /// An AIM Instant Message window for one Discord direct message conversation.
-final class InstantMessageView: FlippedView {
+final class InstantMessageView: FlippedView, NSTextViewDelegate {
     var onSend: ((String, [DiscordBridge.Attachment]) -> Void)?
     var onInfo: (() -> Void)?
+    var onOpenLink: ((URL) -> Void)?
     private var pending: [DiscordBridge.Attachment] = [] {
         didSet { formatBar.attachments = pending.map(\.name) }
     }
@@ -182,6 +183,7 @@ final class InstantMessageView: FlippedView {
         input.onSend = { [weak self] in self?.sendTapped() }
         formatBar.onWrap = { [weak self] marker in self?.wrap(marker) }
         formatBar.onClearAttachments = { [weak self] in self?.pending = [] }
+        transcript.delegate = self
         for view in [input, transcript] {
             view.acceptFileDrops()
             view.onFiles = { [weak self] files in self?.attach(files) }
@@ -260,8 +262,14 @@ final class InstantMessageView: FlippedView {
     func append(_ message: DirectMessage) -> Bool {
         guard shownIDs.insert(message.id).inserted else { return false }
         let mine = message.authorID == myID
-        appendLine(name: mine ? myName : buddyName, color: mine ? Self.myColor : Self.buddyColor, text: message.text,
-                   date: message.date)
+        appendLine(name: mine ? myName : buddyName, color: mine ? Self.myColor : Self.buddyColor, message: message)
+        return true
+    }
+
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
+        guard let url, ["https", "http"].contains(url.scheme ?? "") else { return false }
+        onOpenLink?(url)
         return true
     }
 
@@ -273,15 +281,67 @@ final class InstantMessageView: FlippedView {
         add(line)
     }
 
-    private func appendLine(name: String, color: NSColor, text: String, date: Date) {
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    private func appendLine(name: String, color: NSColor, message: DirectMessage) {
+        let body: [NSAttributedString.Key: Any] = [.font: Self.bodyFont, .foregroundColor: Theme.text]
         let line = NSMutableAttributedString(string: name, attributes: [.font: Self.nameFont, .foregroundColor: color])
-        line.append(NSAttributedString(string: ": " + text + "\n",
-                                       attributes: [.font: Self.bodyFont, .foregroundColor: Theme.text]))
+        let text = NSMutableAttributedString(string: ": " + message.text, attributes: body)
+        let plain = text.string
+        for match in Self.linkDetector?.matches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length)) ?? [] {
+            if let url = match.url { text.addAttribute(.link, value: url, range: match.range) }
+        }
+        line.append(text)
+        for file in message.files {
+            line.append(NSAttributedString(string: " "))
+            line.append(NSAttributedString(string: "[\(file.name)]", attributes: body.merging([NSAttributedString.Key.link: file.url as Any]) { $1 }))
+        }
+        line.append(NSAttributedString(string: "\n", attributes: body))
+        for image in message.images {
+            line.append(imageAttachment(image))
+            line.append(NSAttributedString(string: "\n", attributes: body))
+        }
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        line.addAttribute(.toolTip, value: formatter.string(from: date), range: NSRange(location: 0, length: line.length))
+        line.addAttribute(.toolTip, value: formatter.string(from: message.date), range: NSRange(location: 0, length: line.length))
         add(line)
+    }
+
+    /// A placeholder attachment that is swapped for the image once it downloads. Clicking it opens the full image.
+    private func imageAttachment(_ media: MessageMedia) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        let size = MessageMedia.displaySize(for: media.size)
+        attachment.image = NSImage(size: size, flipped: false) { rect in
+            Theme.rgb(232, 232, 232).setFill()
+            rect.fill()
+            return true
+        }
+        attachment.bounds = NSRect(origin: .zero, size: size)
+        let string = NSMutableAttributedString(attachment: attachment)
+        string.addAttribute(.link, value: media.url, range: NSRange(location: 0, length: string.length))
+        Task { [weak self, weak attachment] in
+            guard let (data, _) = try? await URLSession.shared.data(from: media.url),
+                  let image = NSImage(data: data), let attachment, let self else { return }
+            let fitted = MessageMedia.displaySize(for: media.size == .zero ? image.size : media.size)
+            attachment.image = image
+            attachment.bounds = NSRect(origin: .zero, size: fitted)
+            self.refresh(attachment)
+        }
+        return string
+    }
+
+    private func refresh(_ attachment: NSTextAttachment) {
+        guard let storage = transcript.textStorage else { return }
+        storage.beginEditing()
+        defer { storage.endEditing() }
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+            guard (value as? NSTextAttachment) === attachment else { return }
+            storage.edited(.editedAttributes, range: range, changeInLength: 0)
+            stop.pointee = true
+        }
+        transcript.needsDisplay = true
+        if transcriptScroll.contentView.bounds.maxY >= transcript.bounds.height - 260 { transcript.scrollToEndOfDocument(nil) }
     }
 
     private func add(_ line: NSAttributedString) {

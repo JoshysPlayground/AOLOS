@@ -85,6 +85,7 @@ extension Session {
         window.onClose = { [weak self] in self?.imWindows[buddy.id] = nil }
         imWindows[buddy.id] = window
         view.onInfo = { [weak self] in self?.showInDiscord(buddy) }
+        view.onOpenLink = { [weak self] url in self?.openBrowser(url) }
         view.onSend = { [weak self, weak view] text, files in
             guard let self, let view else { return }
             view.setBusy(true)
