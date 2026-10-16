@@ -136,7 +136,39 @@ final class IMFormatBar: FlippedView {
     }
 }
 
-/// An AIM Instant Message window for one Discord direct message conversation.
+/// The member list on the right of a group chat, like an AIM chat room.
+final class ChatMemberList: FlippedView {
+    var members: [Buddy] = [] { didSet { needsDisplay = true } }
+    static let rowHeight: CGFloat = 18
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.setFill()
+        bounds.fill()
+        Theme.chromeShade.setStroke()
+        NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        let online = members.filter(\.isOnline).count
+        drawText("\(online)/\(members.count) in chat", font: Theme.ui(11, bold: true), color: Theme.text,
+                 in: NSRect(x: 6, y: 2, width: bounds.width - 12, height: 18))
+        for (i, member) in BuddySort.sorted(members).enumerated() {
+            let y = 22 + CGFloat(i) * Self.rowHeight
+            guard y + Self.rowHeight < bounds.height else { break }
+            let dot = NSRect(x: 7, y: y + 5, width: 8, height: 8)
+            let color: NSColor
+            switch member.presence {
+            case .online: color = Theme.rgb(40, 160, 70)
+            case .idle: color = Theme.rgb(214, 160, 0)
+            case .dnd: color = Theme.rgb(200, 50, 40)
+            case .offline: color = Theme.rgb(170, 170, 170)
+            }
+            color.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            drawText(member.name, font: Theme.ui(11), color: member.isOnline ? Theme.text : Theme.mutedText,
+                     in: NSRect(x: 20, y: y, width: bounds.width - 26, height: Self.rowHeight))
+        }
+    }
+}
+
+/// An AIM Instant Message window for one Discord conversation: a direct message, or a group chat with a member list.
 final class InstantMessageView: FlippedView, NSTextViewDelegate {
     var onSend: ((String, [DiscordBridge.Attachment]) -> Void)?
     var onInfo: (() -> Void)?
@@ -147,6 +179,12 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
 
     let buddyID: String
     private(set) var buddyName: String
+    let isGroup: Bool
+    private let memberList = ChatMemberList()
+    var members: [Buddy] {
+        get { memberList.members }
+        set { memberList.members = newValue }
+    }
     private var myID: String
     private var myName: String
     private var shownIDs: Set<String> = []
@@ -168,7 +206,8 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     private static let bodyFont = NSFont(name: "Times New Roman", size: 15) ?? .systemFont(ofSize: 14)
     private static let nameFont = NSFont(name: "Times New Roman Bold", size: 15) ?? .boldSystemFont(ofSize: 14)
 
-    init(buddy: Buddy, myID: String, myName: String) {
+    init(buddy: Buddy, myID: String, myName: String, isGroup: Bool = false) {
+        self.isGroup = isGroup
         buddyID = buddy.id
         buddyName = buddy.name
         avatarURL = buddy.avatarURL
@@ -199,6 +238,10 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         send.action = { [weak self] in self?.sendTapped() }
         bottom.colors = [Theme.rgb(236, 233, 216), Theme.rgb(214, 210, 192)]
         [transcriptScroll, formatBar, inputScroll, bottom].forEach(addSubview)
+        if isGroup {
+            addSubview(memberList)
+            info.isHidden = true
+        }
         bottom.addSubview(icon)
         bottom.addSubview(send)
         bottom.addSubview(info)
@@ -230,7 +273,11 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         bottom.frame = NSRect(x: 0, y: bounds.height - bottomHeight, width: bounds.width, height: bottomHeight)
         inputScroll.frame = NSRect(x: pad, y: bottom.frame.minY - inputHeight - pad, width: bounds.width - 2 * pad, height: inputHeight)
         formatBar.frame = NSRect(x: pad, y: inputScroll.frame.minY - 28, width: bounds.width - 2 * pad, height: 26)
-        transcriptScroll.frame = NSRect(x: pad, y: pad, width: bounds.width - 2 * pad, height: formatBar.frame.minY - pad - 2)
+        let listWidth: CGFloat = isGroup ? min(160, bounds.width * 0.32) : 0
+        let transcriptHeight = formatBar.frame.minY - pad - 2
+        transcriptScroll.frame = NSRect(x: pad, y: pad, width: bounds.width - 2 * pad - (isGroup ? listWidth + pad : 0),
+                                        height: transcriptHeight)
+        memberList.frame = NSRect(x: transcriptScroll.frame.maxX + pad, y: pad, width: listWidth, height: transcriptHeight)
         icon.frame = NSRect(x: 10, y: 7, width: 48, height: 48)
         info.frame = NSRect(x: 68, y: 18, width: max(80, info.preferredWidth), height: 26)
         send.frame = NSRect(x: bottom.bounds.width - 92, y: 14, width: 82, height: 34)
@@ -262,7 +309,8 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
     func append(_ message: DirectMessage) -> Bool {
         guard shownIDs.insert(message.id).inserted else { return false }
         let mine = message.authorID == myID
-        appendLine(name: mine ? myName : buddyName, color: mine ? Self.myColor : Self.buddyColor, message: message)
+        let theirs = message.authorName.isEmpty ? buddyName : message.authorName
+        appendLine(name: mine ? myName : theirs, color: mine ? Self.myColor : Self.buddyColor, message: message)
         return true
     }
 

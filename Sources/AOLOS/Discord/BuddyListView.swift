@@ -27,17 +27,21 @@ final class BuddyTreeView: FlippedView {
     enum Row {
         case group(String, Int)
         case buddy(Buddy)
+        case chat(GroupChat)
     }
 
     var onOpen: ((Buddy) -> Void)?
+    var onOpenChat: ((GroupChat) -> Void)?
     var onMenu: ((Buddy, NSEvent, NSView) -> Void)?
     var onGroupMenu: ((NSEvent, NSView) -> Void)?
     var recentChange: ((String) -> BuddyChange?)?
     private(set) var rows: [Row] = []
     private(set) var selectedID: String?
-    private var collapsed: Set<Int> = [2]
+    private var collapsed: Set<Int> = [3]
     private var buddies: [Buddy] = []
     private var recentBuddies: [Buddy] = []
+    private var chats: [GroupChat] = []
+    private var selectedChatID: String?
     static let rowHeight: CGFloat = 19
 
     var selected: Buddy? {
@@ -47,9 +51,10 @@ final class BuddyTreeView: FlippedView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    func show(_ buddies: [Buddy], recent: [Buddy]) {
+    func show(_ buddies: [Buddy], recent: [Buddy], chats: [GroupChat]) {
         self.buddies = buddies
         recentBuddies = recent
+        self.chats = chats
         rebuild()
     }
 
@@ -58,10 +63,12 @@ final class BuddyTreeView: FlippedView {
         let offline = buddies.filter { !$0.isOnline && recentChange?($0.id) != .signedOff }
         rows = [.group("Recent Buddies (\(recentBuddies.filter(\.isOnline).count)/\(recentBuddies.count))", 0)]
         if !collapsed.contains(0) { rows += recentBuddies.map(Row.buddy) }
-        rows.append(.group("Buddies (\(buddies.filter(\.isOnline).count)/\(buddies.count))", 1))
-        if !collapsed.contains(1) { rows += online.map(Row.buddy) }
-        rows.append(.group("Offline (\(offline.count))", 2))
-        if !collapsed.contains(2) { rows += offline.map(Row.buddy) }
+        rows.append(.group("Group Chats (\(chats.count))", 1))
+        if !collapsed.contains(1) { rows += chats.map(Row.chat) }
+        rows.append(.group("Buddies (\(buddies.filter(\.isOnline).count)/\(buddies.count))", 2))
+        if !collapsed.contains(2) { rows += online.map(Row.buddy) }
+        rows.append(.group("Offline (\(offline.count))", 3))
+        if !collapsed.contains(3) { rows += offline.map(Row.buddy) }
         let height = max(CGFloat(rows.count) * Self.rowHeight + 6, enclosingScrollView?.contentSize.height ?? 0)
         setFrameSize(NSSize(width: enclosingScrollView?.contentSize.width ?? bounds.width, height: height))
         needsDisplay = true
@@ -90,6 +97,8 @@ final class BuddyTreeView: FlippedView {
                          in: NSRect(x: 22, y: rect.minY, width: rect.width - 26, height: rect.height))
             case .buddy(let buddy):
                 drawBuddy(buddy, in: rect)
+            case .chat(let chat):
+                drawChat(chat, in: rect)
             }
         }
     }
@@ -103,6 +112,24 @@ final class BuddyTreeView: FlippedView {
         Theme.aolBlue.setFill()
         NSRect(x: box.minX + 2, y: box.midY - 0.75, width: 6, height: 1.5).fill()
         if !open { NSRect(x: box.midX - 0.75, y: box.minY + 2, width: 1.5, height: 6).fill() }
+    }
+
+    private func drawChat(_ chat: GroupChat, in rect: NSRect) {
+        let isSelected = chat.id == selectedChatID
+        if isSelected {
+            Theme.hover.setFill()
+            NSRect(x: 18, y: rect.minY, width: rect.width - 20, height: rect.height).fill()
+        }
+        Icons.symbol("person.3.fill", size: 10, colors: [isSelected ? .white : Theme.aolBlue])?
+            .draw(in: NSRect(x: 24, y: rect.midY - 8, width: 16, height: 16), from: .zero, operation: .sourceOver,
+                  fraction: 1, respectFlipped: true, hints: nil)
+        let font = Theme.ui(12)
+        let nameWidth = min((chat.name as NSString).size(withAttributes: [.font: font]).width, rect.width - 90)
+        drawText(chat.name, font: font, color: isSelected ? .white : Theme.text,
+                 in: NSRect(x: 46, y: rect.minY, width: nameWidth + 2, height: rect.height))
+        drawText("(\(chat.onlineCount)/\(chat.members.count))", font: Theme.ui(10.5),
+                 color: isSelected ? .white : Theme.mutedText,
+                 in: NSRect(x: 50 + nameWidth, y: rect.minY, width: max(0, rect.width - nameWidth - 54), height: rect.height))
     }
 
     private func drawBuddy(_ buddy: Buddy, in rect: NSRect) {
@@ -164,8 +191,14 @@ final class BuddyTreeView: FlippedView {
             rebuild()
         case .buddy(let buddy):
             selectedID = buddy.id
+            selectedChatID = nil
             needsDisplay = true
             if event.clickCount == 2 { onOpen?(buddy) }
+        case .chat(let chat):
+            selectedChatID = chat.id
+            selectedID = nil
+            needsDisplay = true
+            if event.clickCount == 2 { onOpenChat?(chat) }
         }
     }
 
@@ -185,7 +218,11 @@ final class BuddyTreeView: FlippedView {
         let current = buddyRows.firstIndex { $0.id == selectedID }
         switch event.keyCode {
         case 36, 76:
-            if let selected { onOpen?(selected) }
+            if let selected {
+                onOpen?(selected)
+            } else if let chat = chats.first(where: { $0.id == selectedChatID }) {
+                onOpenChat?(chat)
+            }
         case 125:
             let next = current.map { min($0 + 1, buddyRows.count - 1) } ?? 0
             if buddyRows.indices.contains(next) { selectedID = buddyRows[next].id; needsDisplay = true }
@@ -201,6 +238,7 @@ final class BuddyTreeView: FlippedView {
 /// The Buddy List window: who is signed on to Discord, with Send IM and Info buttons.
 final class BuddyListView: FlippedView {
     var onOpen: ((Buddy) -> Void)?
+    var onOpenChat: ((GroupChat) -> Void)?
     var onInfo: ((Buddy) -> Void)?
     var onConnect: (() -> Void)?
     var onHide: ((Buddy) -> Void)?
@@ -252,6 +290,7 @@ final class BuddyListView: FlippedView {
         buttons.buttons = [imButton, infoButton]
 
         tree.onOpen = { [weak self] buddy in self?.onOpen?(buddy) }
+        tree.onOpenChat = { [weak self] chat in self?.onOpenChat?(chat) }
         tree.onMenu = { [weak self] buddy, event, view in
             let menu = NSMenu()
             menu.addItem(ActionItem("Send Instant Message") { self?.onOpen?(buddy) })
@@ -283,11 +322,12 @@ final class BuddyListView: FlippedView {
         statusLabel.frame = NSRect(x: 12, y: header.frame.maxY + 30, width: bounds.width - 24, height: 64)
         connect.frame = NSRect(x: (bounds.width - connect.preferredWidth) / 2, y: statusLabel.frame.maxY + 6,
                                width: connect.preferredWidth, height: 24)
-        tree.show(lastBuddies, recent: lastRecent)
+        tree.show(lastBuddies, recent: lastRecent, chats: lastChats)
     }
 
     private var lastBuddies: [Buddy] = []
     private var lastRecent: [Buddy] = []
+    private var lastChats: [GroupChat] = []
 
     private func dmMenuItem() -> NSMenuItem? {
         guard !dmPartners.isEmpty else { return nil }
@@ -337,8 +377,9 @@ final class BuddyListView: FlippedView {
         lastBuddies = bridge.sortedBuddies.filter { !hidden.contains($0.id) }
         lastRecent = RecentBuddies.pick(bridge.recentBuddies, hidden: hidden)
         dmPartners = bridge.recentBuddies.filter { !hidden.contains($0.id) }
+        lastChats = bridge.groups
         hiddenBuddies = hidden.map { ($0, bridge.buddy($0)?.name ?? $0) }
-        tree.show(lastBuddies, recent: lastRecent)
+        tree.show(lastBuddies, recent: lastRecent, chats: lastChats)
         needsDisplay = true
         drawMeAvatar()
     }

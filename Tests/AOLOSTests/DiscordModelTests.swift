@@ -98,3 +98,26 @@ final class MessageMediaTests: XCTestCase {
         XCTAssertEqual(MessageMedia.displaySize(for: .zero), CGSize(width: 160, height: 120))
     }
 }
+
+final class GroupChatTests: XCTestCase {
+    func testGroupChatParsing() throws {
+        let chat = try XCTUnwrap(GroupChat(json: [
+            "id": "77", "name": "1.0 enjoyers",
+            "members": [["id": "1", "name": "a", "status": "online"], ["id": "2", "name": "b", "status": "offline"]],
+        ]))
+        XCTAssertEqual(chat.members.count, 2)
+        XCTAssertEqual(chat.onlineCount, 1)
+        XCTAssertNil(GroupChat(json: ["name": "no id"]))
+    }
+
+    func testChatTargetScriptValue() {
+        XCTAssertEqual(ChatTarget.user("5").scriptValue as? String, "5")
+        XCTAssertEqual((ChatTarget.channel("9").scriptValue as? [String: String])?["channelId"], "9")
+        XCTAssertEqual(ChatTarget.channel("9").id, "9")
+    }
+
+    func testAuthorNameParsing() throws {
+        let message = try XCTUnwrap(DirectMessage(json: ["id": "1", "authorID": "2", "authorName": "Aesh", "text": "hi"]))
+        XCTAssertEqual(message.authorName, "Aesh")
+    }
+}

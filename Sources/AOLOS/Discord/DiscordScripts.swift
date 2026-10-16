@@ -174,6 +174,32 @@ extension Scripts {
           .map(friend);
       };
 
+      const members = (channel) => {
+        const r = channel.recipients || channel.rawRecipients || [];
+        return r.map((x) => (x && typeof x === 'object' ? x.id : x)).filter(Boolean);
+      };
+
+      const group = (channel) => {
+        const ids = members(channel);
+        const name = channel.name || ids.map(displayName).join(', ') || 'Group Chat';
+        return { id: String(channel.id), name, members: ids.map(friend) };
+      };
+
+      // Group direct messages, most recent first.
+      const groupDMs = () => {
+        if (!S.channels || typeof S.channels.getMutablePrivateChannels !== 'function') return [];
+        let list = [];
+        try { list = Object.values(S.channels.getMutablePrivateChannels() || {}); } catch (e) { return []; }
+        return list
+          .filter((c) => c && c.type === 3)
+          .sort((a, b) => {
+            const x = snowflake(a.lastMessageId || a.id), y = snowflake(b.lastMessageId || b.id);
+            return x === y ? 0 : (x > y ? -1 : 1);
+          })
+          .slice(0, 30)
+          .map(group);
+      };
+
       let last = '';
       let pending = null;
       const snapshot = (force) => {
@@ -183,6 +209,7 @@ extension Scripts {
           me: { id: me.id, name: me.globalName || me.global_name || me.username, avatar: avatar(me, me.id) },
           friends: friendIDs().map(friend),
           recent: recentDMs(),
+          groups: groupDMs(),
         };
         const json = JSON.stringify(body);
         if (!force && json === last) return;
@@ -230,7 +257,10 @@ extension Scripts {
         } catch (e) {}
         const author = m.author || {};
         const { images, files } = media(m);
-        return { id: String(m.id), authorID: String(author.id || ''), text: text(m), time, images, files };
+        const authorID = String(author.id || '');
+        let authorName = author.global_name || author.globalName || author.username || '';
+        try { if (authorID) authorName = displayName(authorID) || authorName; } catch (e) {}
+        return { id: String(m.id), authorID, authorName, text: text(m), time, images, files };
       };
 
       const recipient = (channel) => {
@@ -241,7 +271,10 @@ extension Scripts {
         return first && typeof first === 'object' ? first.id : first;
       };
 
-      const channelFor = async (userId) => {
+      // A conversation target is a user ID for a direct message or { channelId } for a group.
+      const channelFor = async (target) => {
+        if (target && typeof target === 'object' && target.channelId) return String(target.channelId);
+        const userId = target;
         let cid = need('channels').getDMFromUserId(userId);
         if (cid) return cid;
         if (S.privates && typeof S.privates.ensurePrivateChannel === 'function') {
@@ -272,6 +305,10 @@ extension Scripts {
           if (!a || a.optimistic || !a.message) return;
           if (!S.channels) return;
           const channel = S.channels.getChannel(a.channelId);
+          if (channel && channel.type === 3) {
+            post({ type: 'discord.groupMessage', group: group(channel), message: message(a.message) });
+            return;
+          }
           const userId = recipient(channel);
           if (!userId) return;
           post({ type: 'discord.message', userId, buddy: friend(userId), message: message(a.message) });

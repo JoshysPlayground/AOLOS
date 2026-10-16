@@ -9,6 +9,7 @@ extension Session {
             self.shell.statusBar.status = "\(buddy.name) \(change.verb)."
         }
         discord.onMessage = { [weak self] userId, message in self?.receiveIM(from: userId, message) }
+        discord.onGroupMessage = { [weak self] chat, message in self?.receiveGroupMessage(chat, message) }
     }
 
     var hiddenBuddyIDs: Set<String> { Set(config.hiddenBuddies) }
@@ -32,6 +33,7 @@ extension Session {
         }
         let view = BuddyListView()
         view.onOpen = { [weak self] buddy in self?.openIM(with: buddy) }
+        view.onOpenChat = { [weak self] chat in self?.openGroupChat(chat) }
         view.onInfo = { [weak self] buddy in self?.showInDiscord(buddy) }
         view.onHide = { [weak self] buddy in
             self?.updateConfig { if !$0.hiddenBuddies.contains(buddy.id) { $0.hiddenBuddies.append(buddy.id) } }
@@ -64,10 +66,31 @@ extension Session {
     func refreshBuddies() {
         buddyListView?.reload(discord, hidden: hiddenBuddyIDs)
         for (id, window) in imWindows {
-            guard let view = window.content as? InstantMessageView, let buddy = discord.buddy(id) else { continue }
-            view.update(buddy: buddy)
-            window.title = "\(buddy.name) - Instant Message"
+            guard let view = window.content as? InstantMessageView else { continue }
+            if view.isGroup, let chat = discord.group(id) {
+                view.members = chat.members
+                window.title = "\(chat.name) - Chat"
+            } else if !view.isGroup, let buddy = discord.buddy(id) {
+                view.update(buddy: buddy)
+                window.title = "\(buddy.name) - Instant Message"
+            }
         }
+    }
+
+    @discardableResult
+    func openGroupChat(_ chat: GroupChat) -> InstantMessageView? {
+        guard signedOn, let me = discord.me else { return nil }
+        if let w = imWindows[chat.id], w.superview != nil, let view = w.content as? InstantMessageView {
+            desktop.activate(w)
+            return view
+        }
+        let stub = Buddy(id: chat.id, name: chat.name, presence: .online)
+        let view = InstantMessageView(buddy: stub, myID: me.id, myName: me.name, isGroup: true)
+        view.members = chat.members
+        let window = MDIWindow(title: "\(chat.name) - Chat", icon: Icons.symbol("person.3.fill", colors: [.white]), content: view)
+        window.minSize = NSSize(width: 460, height: 340)
+        openConversation(view, in: window, target: .channel(chat.id), size: NSSize(width: 640, height: 460))
+        return view
     }
 
     @discardableResult
@@ -81,15 +104,21 @@ extension Session {
         let window = MDIWindow(title: "\(buddy.name) - Instant Message",
                                icon: Icons.symbol("message.fill", colors: [.white]), content: view)
         window.minSize = NSSize(width: 360, height: 320)
-        window.focusView = view.input
-        window.onClose = { [weak self] in self?.imWindows[buddy.id] = nil }
-        imWindows[buddy.id] = window
         view.onInfo = { [weak self] in self?.showInDiscord(buddy) }
+        openConversation(view, in: window, target: .user(buddy.id), size: NSSize(width: 500, height: 440))
+        return view
+    }
+
+    /// Shared setup for IM and group chat windows: sending, history and bookkeeping.
+    private func openConversation(_ view: InstantMessageView, in window: MDIWindow, target: ChatTarget, size: NSSize) {
+        window.focusView = view.input
+        window.onClose = { [weak self] in self?.imWindows[target.id] = nil }
+        imWindows[target.id] = window
         view.onOpenLink = { [weak self] url in self?.openBrowser(url) }
         view.onSend = { [weak self, weak view] text, files in
             guard let self, let view else { return }
             view.setBusy(true)
-            self.discord.send(text, files: files, to: buddy.id) { [weak view] error in
+            self.discord.send(text, files: files, to: target) { [weak view] error in
                 view?.setBusy(false)
                 if let error {
                     view?.appendNotice("Message not sent: \(error.localizedDescription)")
@@ -100,9 +129,9 @@ extension Session {
                 }
             }
         }
-        desktop.add(window, size: NSSize(width: 500, height: 440))
+        desktop.add(window, size: size)
 
-        discord.history(with: buddy.id) { [weak view] result in
+        discord.history(with: target) { [weak view] result in
             guard let view else { return }
             switch result {
             case .success(let messages):
@@ -111,7 +140,23 @@ extension Session {
                 view.appendNotice(error.localizedDescription)
             }
         }
-        return view
+    }
+
+    private func receiveGroupMessage(_ chat: GroupChat, _ message: DirectMessage) {
+        refreshBuddies()
+        let mine = message.authorID == discord.me?.id
+        if let w = imWindows[chat.id], let view = w.content as? InstantMessageView {
+            guard view.append(message), !mine else { return }
+            SoundManager.shared.play(.imReceive)
+            if !w.isActive {
+                w.attention = true
+                desktop.windowsChanged()
+            }
+            return
+        }
+        guard !mine else { return }
+        SoundManager.shared.play(.imReceive)
+        openGroupChat(chat)?.append(message)
     }
 
     private func receiveIM(from userId: String, _ message: DirectMessage) {

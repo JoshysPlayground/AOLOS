@@ -109,6 +109,8 @@ struct DirectMessage: Equatable {
     let authorID: String
     let text: String
     let date: Date
+    /// The author's display name. Group chats need it because the author varies.
+    var authorName = ""
     var images: [MessageMedia] = []
     var files: [MessageMedia] = []
 
@@ -124,8 +126,50 @@ struct DirectMessage: Equatable {
         let millis = (json["time"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
         self.init(id: id, authorID: json["authorID"] as? String ?? "", text: json["text"] as? String ?? "",
                   date: Date(timeIntervalSince1970: millis / 1000))
+        authorName = json["authorName"] as? String ?? ""
         images = (json["images"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
         files = (json["files"] as? [[String: Any]] ?? []).compactMap(MessageMedia.init(json:))
+    }
+}
+
+/// A Discord group direct message.
+struct GroupChat: Equatable {
+    let id: String
+    let name: String
+    let members: [Buddy]
+
+    init(id: String, name: String, members: [Buddy]) {
+        self.id = id
+        self.name = name
+        self.members = members
+    }
+
+    init?(json: [String: Any]) {
+        guard let id = json["id"] as? String, !id.isEmpty else { return nil }
+        self.init(id: id, name: json["name"] as? String ?? "Group Chat",
+                  members: (json["members"] as? [[String: Any]] ?? []).compactMap(Buddy.init(json:)))
+    }
+
+    var onlineCount: Int { members.filter(\.isOnline).count }
+}
+
+/// Who a message goes to: one person, or a group chat channel.
+enum ChatTarget: Equatable {
+    case user(String)
+    case channel(String)
+
+    var id: String {
+        switch self {
+        case .user(let id), .channel(let id): return id
+        }
+    }
+
+    /// The value `channelFor` in the bridge script expects.
+    var scriptValue: Any {
+        switch self {
+        case .user(let id): return id
+        case .channel(let id): return ["channelId": id]
+        }
     }
 }
 

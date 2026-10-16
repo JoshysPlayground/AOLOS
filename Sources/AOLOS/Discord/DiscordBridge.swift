@@ -18,6 +18,7 @@ final class DiscordBridge {
     private(set) var recentBuddies: [Buddy] = []
     /// People seen only through a direct message, such as someone who is not a friend.
     private var others: [String: Buddy] = [:]
+    private(set) var groups: [GroupChat] = []
     /// Recent sign on and sign off times. The Buddy List shows a door icon for a few seconds after each.
     private(set) var recent: [String: (change: BuddyChange, date: Date)] = [:]
     private weak var pane: WebPane?
@@ -25,6 +26,7 @@ final class DiscordBridge {
     var onChange: (() -> Void)?
     var onBuddyChange: ((Buddy, BuddyChange) -> Void)?
     var onMessage: ((String, DirectMessage) -> Void)?
+    var onGroupMessage: ((GroupChat, DirectMessage) -> Void)?
 
     static let recentInterval: TimeInterval = 8
 
@@ -34,6 +36,8 @@ final class DiscordBridge {
     }
 
     var sortedBuddies: [Buddy] { BuddySort.sorted(Array(buddies.values)) }
+
+    func group(_ id: String) -> GroupChat? { groups.first { $0.id == id } }
 
     func buddy(_ id: String) -> Buddy? { buddies[id] ?? recentBuddies.first { $0.id == id } ?? others[id] }
     var hasPane: Bool { pane != nil }
@@ -56,6 +60,7 @@ final class DiscordBridge {
         buddies = [:]
         recentBuddies = []
         others = [:]
+        groups = []
         recent = [:]
         me = nil
         onChange?()
@@ -81,6 +86,12 @@ final class DiscordBridge {
                 others[userId] = profile
             }
             onMessage?(userId, message)
+        case "discord.groupMessage":
+            guard let chat = (body["group"] as? [String: Any]).flatMap(GroupChat.init(json:)),
+                  let json = body["message"] as? [String: Any],
+                  let message = DirectMessage(json: json) else { return }
+            if let i = groups.firstIndex(where: { $0.id == chat.id }) { groups[i] = chat } else { groups.insert(chat, at: 0) }
+            onGroupMessage?(chat, message)
         case "discord.signedOff":
             buddies = [:]
             me = nil
@@ -102,6 +113,7 @@ final class DiscordBridge {
         }
         let list = (body["friends"] as? [[String: Any]] ?? []).compactMap(Buddy.init(json:))
         recentBuddies = (body["recent"] as? [[String: Any]] ?? []).compactMap(Buddy.init(json:))
+        groups = (body["groups"] as? [[String: Any]] ?? []).compactMap(GroupChat.init(json:))
         let firstLoad = buddies.isEmpty
         var next: [String: Buddy] = [:]
         let now = Date()
@@ -130,18 +142,19 @@ final class DiscordBridge {
         return entry.change
     }
 
-    func history(with userId: String, limit: Int = 30,
+    func history(with target: ChatTarget, limit: Int = 30,
                  completion: @escaping @MainActor (Result<[DirectMessage], Error>) -> Void) {
-        call("return await window.__aolosDiscord.history(userId, limit);",
-             ["userId": userId, "limit": limit]) { result in
+        call("return await window.__aolosDiscord.history(target, limit);",
+             ["target": target.scriptValue, "limit": limit]) { result in
             completion(result.map { value in
                 (value as? [[String: Any]] ?? []).compactMap(DirectMessage.init(json:))
             })
         }
     }
 
-    func send(_ text: String, to userId: String, completion: @escaping @MainActor (Error?) -> Void) {
-        call("return await window.__aolosDiscord.send(userId, content);", ["userId": userId, "content": text]) { result in
+    func send(_ text: String, to target: ChatTarget, completion: @escaping @MainActor (Error?) -> Void) {
+        call("return await window.__aolosDiscord.send(target, content);",
+             ["target": target.scriptValue, "content": text]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
     }
@@ -153,11 +166,11 @@ final class DiscordBridge {
         let data: Data
     }
 
-    func send(_ text: String, files: [Attachment], to userId: String, completion: @escaping @MainActor (Error?) -> Void) {
-        guard !files.isEmpty else { send(text, to: userId, completion: completion); return }
+    func send(_ text: String, files: [Attachment], to target: ChatTarget, completion: @escaping @MainActor (Error?) -> Void) {
+        guard !files.isEmpty else { send(text, to: target, completion: completion); return }
         let payload = files.map { ["name": $0.name, "type": $0.type, "data": $0.data.base64EncodedString()] }
-        call("return await window.__aolosDiscord.upload(userId, content, files);",
-             ["userId": userId, "content": text, "files": payload]) { result in
+        call("return await window.__aolosDiscord.upload(target, content, files);",
+             ["target": target.scriptValue, "content": text, "files": payload]) { result in
             if case .failure(let error) = result { completion(error) } else { completion(nil) }
         }
     }

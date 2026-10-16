@@ -134,6 +134,10 @@ Attachments are capped at 10 MB, the Discord limit without Nitro.
 Right click the list and choose Send Instant Message To for anyone you have an
 open direct message with, friend or not.
 
+Group Chats lists your group direct messages. Double click one to open a chat
+window with its members on the right. It sends, receives and attaches files
+the same way as an Instant Message window.
+
 The bridge script is `Scripts.discordBridge` in
 [DiscordScripts.swift](Sources/AOLOS/Discord/DiscordScripts.swift). It uses
 the web client's internal stores, which Discord can change in any release.
