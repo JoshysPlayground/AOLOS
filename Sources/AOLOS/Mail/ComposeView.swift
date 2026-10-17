@@ -9,6 +9,9 @@ final class ComposeView: FlippedView {
     let toView: NSTextView
     let ccView: NSTextView
     let subjectField = NSTextField()
+    /// Shown on the Subject row when more than one Gmail account is signed in.
+    private let fromPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let accounts: [String]
     let textView: NSTextView
     private let toScroll: NSScrollView
     private let ccScroll: NSScrollView
@@ -35,7 +38,8 @@ final class ComposeView: FlippedView {
     static let defaultFont = NSFont(name: "Arial", size: 13) ?? .systemFont(ofSize: 13)
     static let maxAttachmentBytes = 24 * 1024 * 1024
 
-    init(to: String, cc: String, subject: String, body: String) {
+    init(to: String, cc: String, subject: String, body: String, accounts: [String] = [], from: String? = nil) {
+        self.accounts = accounts
         toScroll = NSTextView.scrollableTextView()
         ccScroll = NSTextView.scrollableTextView()
         bodyScroll = NSTextView.scrollableTextView()
@@ -57,6 +61,11 @@ final class ComposeView: FlippedView {
         }
         subjectField.stringValue = subject
         subjectField.font = Theme.ui(12)
+        fromPopup.addItems(withTitles: accounts)
+        if let from { fromPopup.selectItem(withTitle: from) }
+        fromPopup.controlSize = .small
+        fromPopup.font = Theme.ui(11)
+        fromPopup.isHidden = accounts.count < 2
 
         textView.isRichText = true
         textView.allowsUndo = true
@@ -111,7 +120,7 @@ final class ComposeView: FlippedView {
         print.action = { [weak self] in self?.printMessage() }
         sideButtons = [send, later, book, print]
 
-        ([toScroll, ccScroll, subjectField, formatBar, bodyScroll, attachButton, detachButton, spellButton, receipt,
+        ([toScroll, ccScroll, subjectField, fromPopup, formatBar, bodyScroll, attachButton, detachButton, spellButton, receipt,
           attachmentLabel, statusLabel] + sideButtons).forEach(addSubview)
         updateAttachments()
     }
@@ -120,6 +129,11 @@ final class ComposeView: FlippedView {
 
     var preferredFirstResponder: NSView { toView.string.isEmpty ? toView : textView }
 
+    /// The account this mail goes out from.
+    var fromAccount: String { fromPopup.titleOfSelectedItem ?? accounts.first ?? "" }
+
+    private var showsFrom: Bool { !fromPopup.isHidden }
+
     override func layout() {
         super.layout()
         let side: CGFloat = 92
@@ -127,7 +141,9 @@ final class ComposeView: FlippedView {
         let half = (right - 8) / 2
         toScroll.frame = NSRect(x: 84, y: 8, width: half - 84, height: 58)
         ccScroll.frame = NSRect(x: half + 84, y: 8, width: right - half - 84, height: 58)
-        subjectField.frame = NSRect(x: 84, y: 74, width: right - 84, height: 22)
+        let fromWidth: CGFloat = showsFrom ? min(240, max(150, (right - 84) * 0.4)) : 0
+        subjectField.frame = NSRect(x: 84, y: 74, width: right - 84 - (showsFrom ? fromWidth + 58 : 0), height: 22)
+        fromPopup.frame = NSRect(x: right - fromWidth, y: 74, width: fromWidth, height: 22)
         formatBar.frame = NSRect(x: 6, y: 102, width: right - 6, height: 28)
         var x: CGFloat = 0
         fontPopup.frame = NSRect(x: x, y: 3, width: 132, height: 22); x += 136
@@ -164,7 +180,9 @@ final class ComposeView: FlippedView {
         Theme.toolbarLine.setFill()
         NSRect(x: side.minX, y: 0, width: 1, height: bounds.height).fill()
         let half = (bounds.width - 92 - 16 - 8) / 2
-        for (label, x, y) in [("Send To:", 8.0, 10.0), ("Copy To:", half + 8, 10.0), ("Subject:", 8.0, 76.0)] {
+        var labels: [(String, CGFloat, CGFloat)] = [("Send To:", 8, 10), ("Copy To:", half + 8, 10), ("Subject:", 8, 76)]
+        if showsFrom { labels.append(("From:", fromPopup.frame.minX - 50, 76)) }
+        for (label, x, y) in labels {
             drawText(label, font: Theme.ui(12, bold: true), color: Theme.text, in: NSRect(x: x, y: y, width: 74, height: 18))
         }
         let bar = NSBezierPath(roundedRect: formatBar.frame.insetBy(dx: -2, dy: 0), xRadius: 4, yRadius: 4)

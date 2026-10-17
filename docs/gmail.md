@@ -21,6 +21,31 @@ You supply your own OAuth client. AOL-OS ships without one.
 In AOL-OS, open Settings, paste both values, and click Connect Gmail. Your
 browser opens the Google sign in. When it finishes, return to AOL-OS.
 
+## More than one account
+
+Click Add Account in Settings, or Mail Options > Add Gmail Account in the
+Mailbox. Google shows its account chooser, so pick the other account there. All
+accounts share the one OAuth client. On an External app in Testing, add each
+address as a test user.
+
+Manage Accounts in Settings lists each account with Reconnect, Make Primary,
+and Remove. The first account is the primary one. Write Mail starts from it.
+
+- The Mailbox merges New, Old, Sent, and Search across accounts, newest first.
+  A colored badge with the account's first letter marks each row. Hover it for
+  the address.
+- The Account menu next to Show mail from narrows the Mailbox, its folders,
+  Check Mail Now, and Search to one account. Manage Mail lists each account's
+  Gmail folders under its address.
+- Write Mail shows a From menu when two or more accounts are signed in. Replies
+  and forwards start from the account that received the message, else an
+  account named in To or Cc, else the primary account.
+- Each account keeps its own IMAP command and IDLE connections. When several
+  accounts report new mail at sign on, `gotmail` plays once.
+- Open Gmail on the Web, with one account picked in the Account menu, adds
+  `authuser` so the web pane opens that account if the `google` profile is
+  signed in to it.
+
 An External app left in the Testing publishing status gets refresh tokens that
 expire after 7 days, per Google's
 [token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
@@ -38,11 +63,18 @@ Desktop app clients, per the
 [loopback migration guide](https://developers.google.com/identity/protocols/oauth2/resources/loopback-migration).
 
 The requested scopes are `https://mail.google.com/`, `openid`, and `email`.
-The client ID, client secret, refresh token, and account address are generic
-password items in the login keychain under the service `com.aolos.app`.
+The sign in asks with `prompt=select_account consent`. Reconnect passes the
+address as `login_hint`.
 
-Disconnect in Settings revokes the refresh token and removes it from the
-keychain.
+Secrets live in the login keychain under the service `com.aolos.app`:
+`google.clientID`, `google.clientSecret`, `google.accounts` (a JSON list of
+addresses, primary first), and one `google.refreshToken.<address>` per account.
+The single-account keys `google.email` and `google.refreshToken` move to the
+new keys on first use.
+
+Remove in Settings revokes that account's refresh token and removes it from the
+keychain. A refresh token that Google rejects is dropped. The account stays in
+the list as signed out until you reconnect or remove it.
 
 ## Mailbox behavior
 

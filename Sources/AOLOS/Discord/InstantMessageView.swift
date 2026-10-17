@@ -163,7 +163,7 @@ final class ChatMemberList: FlippedView {
     static let rowHeight: CGFloat = 18
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         Theme.chromeShade.setStroke()
         NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
@@ -301,7 +301,7 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         text.isVerticallyResizable = true
         text.autoresizingMask = [.width]
         text.textContainer?.widthTracksTextView = true
-        text.backgroundColor = .white
+        text.backgroundColor = Theme.paper
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
         scroll.documentView = text
@@ -511,7 +511,7 @@ final class InstantMessageView: FlippedView, NSTextViewDelegate {
         let string = NSMutableAttributedString(attachment: attachment)
         string.addAttribute(.link, value: media.url, range: NSRange(location: 0, length: string.length))
         Task { [weak self, weak attachment] in
-            guard let (data, _) = try? await URLSession.shared.data(from: media.url),
+            guard let (data, _) = try? await URLSession.shared.data(for: MediaAuth.request(media.url)),
                   let image = NSImage(data: data), let attachment, let self else { return }
             let fitted = MessageMedia.displaySize(for: media.size == .zero ? image.size : media.size)
             attachment.image = image

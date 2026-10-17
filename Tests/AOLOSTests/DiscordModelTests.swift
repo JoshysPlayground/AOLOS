@@ -38,13 +38,6 @@ final class DiscordModelTests: XCTestCase {
         XCTAssertNil(BuddyChange.between(.offline, .offline))
     }
 
-    func testChangeSounds() {
-        XCTAssertEqual(BuddyChange.signedOn.sound, .buddyIn)
-        XCTAssertEqual(BuddyChange.signedOff.sound, .buddyOut)
-        XCTAssertEqual(BuddyChange.away.sound, .doorClose)
-        XCTAssertEqual(BuddyChange.back.sound, .doorOpen)
-    }
-
     func testSortPutsOnlineFirstThenName() {
         let sorted = BuddySort.sorted([
             Buddy(id: "1", name: "zed", presence: .offline),
@@ -152,5 +145,17 @@ final class ReplyReactionTests: XCTestCase {
         XCTAssertTrue(room.voice)
         XCTAssertEqual(room.people, ["Aesh"])
         XCTAssertTrue(room.joined)
+    }
+
+    func testMuteCoversRoomCategoryAndServer() throws {
+        let server = try XCTUnwrap(ChatServer(json: ["id": "s1", "name": "Server"]))
+        let room = try XCTUnwrap(ChatRoom(json: ["id": "r1", "name": "general", "category": "Text", "categoryId": "c1"]))
+        let loose = try XCTUnwrap(ChatRoom(json: ["id": "r2", "name": "lobby"]))
+        XCTAssertFalse(ChatMute.isMuted(room, in: server, muted: []))
+        XCTAssertTrue(ChatMute.isMuted(room, in: server, muted: ["r1"]))
+        XCTAssertTrue(ChatMute.isMuted(room, in: server, muted: ["c1"]))
+        XCTAssertTrue(ChatMute.isMuted(room, in: server, muted: ["s1"]))
+        XCTAssertFalse(ChatMute.isMuted(room, in: server, muted: ["r2", "c2"]))
+        XCTAssertFalse(ChatMute.isMuted(loose, in: server, muted: [""]))
     }
 }

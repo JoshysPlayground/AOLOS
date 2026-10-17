@@ -22,13 +22,24 @@ struct AOLConfig: Codable {
     var screenName = NSUserName()
     var requireTouchID = true
     var soundsEnabled = true
+    /// Web pages get `prefers-color-scheme: dark`.
+    var darkWebPages = false
+    /// Experimental dark theme for AOL-OS itself.
+    var darkTheme = false
     var openAtSignOn = ["mail"]
     var services = AOLConfig.defaultServices
     var keywords = AOLConfig.defaultKeywords
     var neverSaveHosts: [String] = []
     var radioPresets: [RadioStation] = []
-    /// Discord user IDs left off the Buddy List.
+    /// Buddy IDs left off the Buddy List. Slack IDs start with `slack:` and Messenger IDs with `fb:`.
     var hiddenBuddies: [String] = []
+    /// Favorite Discord channels, in the order they were added. Listed under People > Favorites
+    /// and pinned to the top of their server's room list.
+    var favoriteRooms: [FavoriteRoom] = []
+    /// Muted server, category and room IDs. See `ChatMute`.
+    var mutedRooms: [String] = []
+    /// Saved pages in the Favorites menu, in menu order.
+    var favorites: [Favorite] = []
     var screenNames: [String] = []
     var signOnLocation = "Home (Broadband)"
 
@@ -40,6 +51,8 @@ struct AOLConfig: Codable {
         screenName = try c.decodeIfPresent(String.self, forKey: .screenName) ?? d.screenName
         requireTouchID = try c.decodeIfPresent(Bool.self, forKey: .requireTouchID) ?? d.requireTouchID
         soundsEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? d.soundsEnabled
+        darkWebPages = try c.decodeIfPresent(Bool.self, forKey: .darkWebPages) ?? d.darkWebPages
+        darkTheme = try c.decodeIfPresent(Bool.self, forKey: .darkTheme) ?? d.darkTheme
         openAtSignOn = try c.decodeIfPresent([String].self, forKey: .openAtSignOn) ?? d.openAtSignOn
         services = try c.decodeIfPresent([ServiceDef].self, forKey: .services) ?? d.services
         for service in d.services where !services.contains(where: { $0.id == service.id }) {
@@ -49,6 +62,9 @@ struct AOLConfig: Codable {
         neverSaveHosts = try c.decodeIfPresent([String].self, forKey: .neverSaveHosts) ?? d.neverSaveHosts
         radioPresets = try c.decodeIfPresent([RadioStation].self, forKey: .radioPresets) ?? d.radioPresets
         hiddenBuddies = try c.decodeIfPresent([String].self, forKey: .hiddenBuddies) ?? d.hiddenBuddies
+        favoriteRooms = (try? c.decodeIfPresent([FavoriteRoom].self, forKey: .favoriteRooms)) ?? d.favoriteRooms
+        mutedRooms = try c.decodeIfPresent([String].self, forKey: .mutedRooms) ?? d.mutedRooms
+        favorites = try c.decodeIfPresent([Favorite].self, forKey: .favorites) ?? d.favorites
         screenNames = try c.decodeIfPresent([String].self, forKey: .screenNames) ?? d.screenNames
         signOnLocation = try c.decodeIfPresent(String.self, forKey: .signOnLocation) ?? d.signOnLocation
     }
@@ -70,6 +86,8 @@ struct AOLConfig: Codable {
                    profile: "google", icon: "square.and.pencil"),
         ServiceDef(id: "chat", title: "People Connection", url: "https://discord.com/channels/@me",
                    profile: "discord", icon: "bubble.left.and.bubble.right.fill", notifySound: "imrcv"),
+        ServiceDef(id: "messenger", title: "Messenger", url: "https://www.facebook.com/messages/t/",
+                   profile: "facebook", icon: "bolt.horizontal.circle.fill", notifySound: "imrcv"),
         ServiceDef(id: "im", title: "Instant Message", url: "https://app.slack.com/client",
                    profile: "slack", icon: "message.fill", notifySound: "imrcv"),
         ServiceDef(id: "ytmusic", title: "YouTube Music", url: "https://music.youtube.com",
@@ -86,16 +104,42 @@ struct AOLConfig: Codable {
                    profile: "google", icon: "calendar"),
         ServiceDef(id: "movies", title: "Moviefone", url: "https://www.fandango.com",
                    profile: "browser", icon: "popcorn.fill"),
+        ServiceDef(id: "crunchyroll", title: "Crunchyroll", url: "https://www.crunchyroll.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "netflix", title: "Netflix", url: "https://www.netflix.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "hulu", title: "Hulu", url: "https://www.hulu.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "disneyplus", title: "Disney+", url: "https://www.disneyplus.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "primevideo", title: "Prime Video", url: "https://www.amazon.com/gp/video/storefront",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "youtube", title: "YouTube", url: "https://www.youtube.com",
+                   profile: "google", icon: "play.rectangle.fill"),
+        ServiceDef(id: "hbomax", title: "HBO Max", url: "https://www.hbomax.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "peacock", title: "Peacock", url: "https://www.peacocktv.com",
+                   profile: "streaming", icon: "play.tv.fill"),
+        ServiceDef(id: "appletv", title: "Apple TV", url: "https://tv.apple.com",
+                   profile: "streaming", icon: "appletv.fill"),
     ]
+
+    /// Entertainment menu order. The first four show directly. The rest go under More.
+    static let entertainmentServices = ["crunchyroll", "netflix", "hulu", "disneyplus",
+                                        "primevideo", "youtube", "hbomax", "peacock", "appletv"]
 
     static let defaultKeywords: [String: String] = [
         "mail": "mail", "gmail": "mail", "write": "write",
         "chat": "chat", "discord": "chat", "people": "chat",
-        "im": "im", "slack": "im",
+        "im": "im", "slack": "im", "messenger": "messenger", "facebook": "messenger",
         "buddy list": "buddylist", "buddylist": "buddylist", "buddies": "buddylist", "aim": "buddylist",
         "music": "radio", "ytmusic": "ytmusic", "youtube music": "ytmusic", "spotify": "spotify",
         "finance": "finance", "bank": "finance",
         "welcome": "welcome", "settings": "settings",
+        "netflix": "netflix", "hulu": "hulu", "disney": "disneyplus", "disney+": "disneyplus",
+        "prime": "primevideo", "prime video": "primevideo", "youtube": "youtube",
+        "hbo": "hbomax", "max": "hbomax", "hbo max": "hbomax", "peacock": "peacock",
+        "apple tv": "appletv", "appletv": "appletv", "crunchyroll": "crunchyroll",
     ]
 }
 

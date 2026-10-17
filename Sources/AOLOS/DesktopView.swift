@@ -1,6 +1,7 @@
 import AppKit
 
-/// A minimized child window: a short Luna title bar with restore and close, resting on the bottom edge.
+/// A minimized child window: a short Luna title bar with restore and close, resting on the bottom edge
+/// or stacked in the chat column.
 final class TrayChip: PressableView {
     weak var target: MDIWindow?
     let restoreButton = CaptionButton(kind: .restore)
@@ -50,10 +51,27 @@ final class TrayChip: PressableView {
     }
 }
 
+/// The left edge column of minimized chat windows. It scrolls when they do not fit.
+final class ChatColumn: NSScrollView {
+    let stack = FlippedView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        drawsBackground = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        documentView = stack
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// MDI client area. Owns stacking, activation, minimize, cascade and tile.
 final class DesktopView: FlippedView {
     private(set) var windows: [MDIWindow] = []
     private var chips: [ObjectIdentifier: TrayChip] = [:]
+    private let chatColumn = ChatColumn()
     private var topZ = 0
     private var cascadeIndex = 0
     private var clickMonitor: Any?
@@ -62,6 +80,8 @@ final class DesktopView: FlippedView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         autoresizesSubviews = true
+        chatColumn.isHidden = true
+        addSubview(chatColumn)
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             self?.activateWindow(under: event)
             return event
@@ -87,7 +107,8 @@ final class DesktopView: FlippedView {
         guard event.window === window else { return }
         let p = convert(event.locationInWindow, from: nil)
         guard bounds.contains(p) else { return }
-        if chips.values.contains(where: { $0.frame.contains(p) }) { return }
+        if chips.values.contains(where: { $0.superview === self && $0.frame.contains(p) }) { return }
+        if !chatColumn.isHidden, chatColumn.frame.contains(p) { return }
         if let hit = visibleWindows.last(where: { $0.frame.contains(p) }), !hit.isActive {
             activate(hit)
         }
@@ -139,7 +160,7 @@ final class DesktopView: FlippedView {
             if let w { self?.close(w) }
         }
         chips[ObjectIdentifier(w)] = chip
-        addSubview(chip)
+        (w.minimizesToSide ? chatColumn.stack : self).addSubview(chip)
         layoutChips()
         restack()
         activateTopmost()
@@ -187,10 +208,12 @@ final class DesktopView: FlippedView {
         guard !visible.isEmpty else { return }
         let cols = Int(ceil(sqrt(Double(visible.count))))
         let rows = Int(ceil(Double(visible.count) / Double(cols)))
-        let w = bounds.width / CGFloat(cols)
-        let h = (bounds.height - (chips.isEmpty ? 0 : 30)) / CGFloat(rows)
+        let left = chatColumn.isHidden ? 0 : chatColumn.frame.maxX + 2
+        let bottomRow = chips.values.contains { $0.superview === self }
+        let w = (bounds.width - left) / CGFloat(cols)
+        let h = (bounds.height - (bottomRow ? 30 : 0)) / CGFloat(rows)
         for (i, win) in visible.enumerated() {
-            let rect = NSRect(x: CGFloat(i % cols) * w, y: CGFloat(i / cols) * h, width: w, height: h)
+            let rect = NSRect(x: left + CGFloat(i % cols) * w, y: CGFloat(i / cols) * h, width: w, height: h)
             win.setMaximizedFrame(rect.integral)
         }
     }
@@ -218,13 +241,24 @@ final class DesktopView: FlippedView {
     }
 
     private func layoutChips() {
+        let size = TrayChip.size
         var x: CGFloat = 2
+        var y: CGFloat = 0
         for w in windows where w.isHidden {
             guard let chip = chips[ObjectIdentifier(w)] else { continue }
-            chip.frame = NSRect(x: x, y: bounds.height - TrayChip.size.height,
-                                width: TrayChip.size.width, height: TrayChip.size.height)
-            x += TrayChip.size.width + 2
+            if w.minimizesToSide {
+                chip.frame = NSRect(x: 0, y: y, width: size.width, height: size.height)
+                y += size.height + 2
+            } else {
+                chip.frame = NSRect(x: x, y: bounds.height - size.height, width: size.width, height: size.height)
+                x += size.width + 2
+            }
         }
+        let height = max(0, y - 2)
+        let bottomRow = x > 2 ? size.height + 2 : 0
+        chatColumn.isHidden = height == 0
+        chatColumn.frame = NSRect(x: 2, y: 2, width: size.width, height: min(height, max(0, bounds.height - bottomRow - 4)))
+        chatColumn.stack.frame = NSRect(x: 0, y: 0, width: size.width, height: height)
     }
 
     private func restack() {
@@ -232,7 +266,7 @@ final class DesktopView: FlippedView {
     }
 
     private static func zValue(_ view: NSView) -> Int {
-        if view is TrayChip { return Int.max }
+        if view is TrayChip || view is ChatColumn { return Int.max }
         if let w = view as? MDIWindow { return w.zIndex }
         return Int.min
     }

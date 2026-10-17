@@ -84,22 +84,19 @@ final class MenuRow: FlippedView {
     }
 }
 
-/// The AOL 9 toolbar: main buttons on the left, a framed scrolling group on the right, then the logo.
+/// The AOL 9 toolbar: main buttons on the left, a framed group with AOL Radio now playing on the right, then the logo.
 final class ToolbarView: FlippedView {
     var leftItems: [ToolbarButton] = [] { didSet { replace(oldValue, with: leftItems) } }
     var groupItems: [ToolbarButton] = [] { didSet { replace(oldValue, with: groupItems) } }
-    let scrollLeft = ChromeButton(symbol: "chevron.left.2")
-    let scrollRight = ChromeButton(symbol: "chevron.right.2")
+    let nowPlaying = NowPlayingWidget()
     let customize = ChromeButton(symbol: "checkmark.square")
-    private var firstGroupItem = 0
     private var groupRect = NSRect.zero
     static let itemWidth: CGFloat = 64
+    static let nowPlayingWidth: ClosedRange<CGFloat> = 170...300
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        [scrollLeft, scrollRight, customize].forEach(addSubview)
-        scrollLeft.action = { [weak self] in self?.scroll(-1) }
-        scrollRight.action = { [weak self] in self?.scroll(1) }
+        [nowPlaying, customize].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -107,11 +104,6 @@ final class ToolbarView: FlippedView {
     private func replace(_ old: [ToolbarButton], with new: [ToolbarButton]) {
         old.forEach { $0.removeFromSuperview() }
         new.forEach(addSubview)
-        needsLayout = true
-    }
-
-    private func scroll(_ delta: Int) {
-        firstGroupItem = max(0, min(groupItems.count - 1, firstGroupItem + delta))
         needsLayout = true
     }
 
@@ -129,27 +121,30 @@ final class ToolbarView: FlippedView {
         }
 
         groupRect = NSRect(x: x + 14, y: 3, width: max(0, logoRect.minX - 10 - x - 14), height: h)
-        let arrowW: CGFloat = 22
-        scrollLeft.frame = NSRect(x: groupRect.minX + 4, y: groupRect.minY + 4, width: arrowW, height: 18)
-        scrollRight.frame = NSRect(x: groupRect.maxX - arrowW - 4, y: groupRect.minY + 4, width: arrowW, height: 18)
-        customize.frame = NSRect(x: groupRect.maxX - arrowW - 4, y: groupRect.maxY - 22, width: arrowW, height: 18)
+        let customizeW: CGFloat = 22
+        customize.frame = NSRect(x: groupRect.maxX - customizeW - 4, y: groupRect.maxY - 22, width: customizeW, height: 18)
 
-        let inner = groupRect.insetBy(dx: arrowW + 8, dy: 0)
-        let fits = max(1, Int(inner.width / Self.itemWidth))
-        if groupItems.count <= fits { firstGroupItem = 0 }
-        firstGroupItem = min(firstGroupItem, max(0, groupItems.count - fits))
-        let shown = min(fits, groupItems.count - firstGroupItem)
-        let spacing = shown > 0 ? (inner.width - CGFloat(shown) * Self.itemWidth) / CGFloat(shown + 1) : 0
-        var gx = inner.minX + spacing
-        for (i, item) in groupItems.enumerated() {
-            let visible = i >= firstGroupItem && i < firstGroupItem + shown
-            item.isHidden = !visible
-            guard visible else { continue }
-            item.frame = NSRect(x: gx, y: 3, width: Self.itemWidth, height: h)
-            gx += Self.itemWidth + spacing
+        let inner = NSRect(x: groupRect.minX + 6, y: groupRect.minY,
+                           width: max(0, groupRect.width - customizeW - 16), height: h)
+        let widths = groupItems.map { $0.preferredWidth(minWidth: Self.itemWidth) }
+        let gap: CGFloat = 6
+        let itemsWidth = widths.reduce(0, +) + gap * CGFloat(max(0, widths.count - 1))
+        let widgetW = min(Self.nowPlayingWidth.upperBound, inner.width - itemsWidth - 12)
+        nowPlaying.isHidden = widgetW < Self.nowPlayingWidth.lowerBound
+        if !nowPlaying.isHidden {
+            nowPlaying.frame = NSRect(x: inner.maxX - widgetW, y: inner.minY + 4, width: widgetW, height: inner.height - 8)
         }
-        scrollLeft.isEnabled = firstGroupItem > 0
-        scrollRight.isEnabled = firstGroupItem + shown < groupItems.count
+
+        let limit = nowPlaying.isHidden ? inner.maxX : nowPlaying.frame.minX - 8
+        var gx = inner.minX + 4
+        var overflow = false
+        for (item, width) in zip(groupItems, widths) {
+            overflow = overflow || gx + width > limit
+            item.isHidden = overflow
+            guard !overflow else { continue }
+            item.frame = NSRect(x: gx, y: 3, width: width, height: h)
+            gx += width + gap
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -175,14 +170,27 @@ final class NavBar: FlippedView {
     let back = ChromeButton(symbol: "chevron.left")
     let forward = ChromeButton(symbol: "chevron.right")
     let reload = ChromeButton(symbol: "arrow.clockwise")
+    let favorite = ChromeButton(symbol: "heart")
     let address = ActionTextField(placeholder: "Type a Keyword or Web Address here and click Go")
     let go = ChromeButton(title: "Go", prominent: true)
     let search = ChromeButton(title: "Search", symbol: "magnifyingglass")
+    var isFavorite = false {
+        didSet {
+            guard isFavorite != oldValue else { return }
+            favorite.symbol = Icons.symbol(isFavorite ? "heart.fill" : "heart", size: 11,
+                                           colors: [isFavorite ? Theme.rgb(204, 40, 40) : Theme.aolBlue])
+            favorite.toolTip = isFavorite ? "In your Favorite Places" : "Add to Favorites"
+            favorite.needsDisplay = true
+        }
+    }
     var isLoading = false { didSet { reload.symbol = Icons.symbol(isLoading ? "xmark" : "arrow.clockwise", size: 11, colors: [Theme.aolBlue]); reload.needsDisplay = true } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        [welcome, back, forward, reload, address, go, search].forEach(addSubview)
+        [welcome, back, forward, reload, favorite, address, go, search].forEach(addSubview)
+        back.toolTip = "Back"
+        forward.toolTip = "Forward"
+        favorite.toolTip = "Add to Favorites"
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -191,7 +199,7 @@ final class NavBar: FlippedView {
         super.layout()
         let h: CGFloat = 22, y = (bounds.height - h) / 2
         var x: CGFloat = 8
-        for b in [welcome, back, forward, reload] {
+        for b in [welcome, back, forward, reload, favorite] {
             b.frame = NSRect(x: x, y: y, width: b.preferredWidth, height: h)
             x = b.frame.maxX + (b === welcome ? 10 : 3)
         }
@@ -281,9 +289,10 @@ final class ShellView: FlippedView {
         for item in toolbar.leftItems + toolbar.groupItems {
             item.isEnabled = signedOn
         }
-        [toolbar.scrollLeft, toolbar.scrollRight, toolbar.customize].forEach { $0.isEnabled = signedOn }
+        toolbar.customize.isEnabled = signedOn
+        toolbar.nowPlaying.isEnabled = signedOn
         toolbar.needsLayout = true
-        [navBar.welcome, navBar.back, navBar.forward, navBar.reload, navBar.go, navBar.search].forEach { $0.isEnabled = signedOn }
+        [navBar.welcome, navBar.back, navBar.forward, navBar.reload, navBar.favorite, navBar.go, navBar.search].forEach { $0.isEnabled = signedOn }
         navBar.address.isEnabled = signedOn
     }
 }

@@ -268,7 +268,7 @@ final class PicturesView: FlippedView, NSCollectionViewDataSource, NSCollectionV
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         guard library.isAuthorized else { return }
         let band = NSRect(x: gridScroll.frame.minX, y: 32, width: gridScroll.frame.width, height: Self.bandHeight)

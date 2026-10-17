@@ -20,7 +20,6 @@ extension Session {
             self?.updateConfig { $0.radioPresets.removeAll { $0 == station } }
             self?.spotify.setPresets(self?.config.radioPresets ?? [])
         }
-        spotify.onChange = { [weak self] in self?.radioView?.reload() }
 
         let window = MDIWindow(title: "AOL Radio", icon: Icons.symbol("dot.radiowaves.left.and.right", colors: [.white]), content: view)
         window.minSize = NSSize(width: 760, height: 470)
@@ -28,7 +27,6 @@ extension Session {
             self?.radioView?.stop()
             self?.radioView = nil
             self?.radioWindow = nil
-            self?.spotify.stopPolling()
         }
         radioWindow = window
         radioView = view
@@ -37,6 +35,39 @@ extension Session {
         if spotify.auth.isConnected {
             spotify.startPolling()
             Task { [weak self] in await self?.spotify.loadLibrary() }
+        }
+    }
+
+    /// Spotify polling runs for the whole signed-on session so the toolbar readout stays current.
+    func setUpNowPlaying() {
+        spotify.onChange = { [weak self] in
+            self?.radioView?.reload()
+            self?.refreshNowPlaying()
+        }
+        let widget = shell.toolbar.nowPlaying
+        widget.onOpen = { [weak self] in self?.openRadio() }
+        widget.onTogglePlay = { [weak self] in self?.radioCommand { try await $0.togglePlay() } }
+        widget.onNext = { [weak self] in self?.radioCommand { try await $0.next() } }
+    }
+
+    func refreshNowPlaying() {
+        let state: NowPlayingWidget.State
+        if !signedOn {
+            state = .signedOff
+        } else if !spotify.auth.isConnected {
+            state = .disconnected
+        } else if let player = spotify.player, let track = player.track {
+            state = .playing(track, isPlaying: player.isPlaying)
+        } else {
+            state = .idle
+        }
+        shell.toolbar.nowPlaying.show(state, player: spotify.player)
+    }
+
+    private func radioCommand(_ work: @escaping @MainActor (SpotifyService) async throws -> Void) {
+        Task { [weak self] in
+            guard let self else { return }
+            do { try await work(self.spotify) } catch { self.showRadioError(error) }
         }
     }
 
@@ -70,6 +101,7 @@ extension Session {
         spotify.stopPolling()
         spotify.auth.disconnect()
         radioView?.reload()
+        refreshNowPlaying()
         settingsView?.refreshSpotifyStatus()
     }
 

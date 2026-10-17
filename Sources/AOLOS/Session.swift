@@ -15,22 +15,31 @@ final class Session {
     private var welcomeWindow: MDIWindow?
     var welcomePane: WelcomePane?
     private var settingsWindow: MDIWindow?
-    private var serviceWindows: [String: MDIWindow] = [:]
+    var serviceWindows: [String: MDIWindow] = [:]
     private var savePromptHosts: Set<String> = []
-    let mail = MailService()
+    let mail = MailCenter()
     var mailboxWindow: MDIWindow?
     var mailboxView: MailboxView?
     var settingsView: SettingsView?
     let spotify = SpotifyService()
     var radioWindow: MDIWindow?
     var radioView: RadioView?
-    let discord = DiscordBridge()
-    var buddyListWindow: MDIWindow?
-    var buddyListView: BuddyListView?
-    var imWindows: [String: MDIWindow] = [:]
     let photos = PhotoLibrary()
     var picturesWindow: MDIWindow?
     var picturesView: PicturesView?
+    let discord = DiscordBridge()
+    let slack = SlackClient()
+    let messenger = MessengerBridge()
+    var buddyListWindow: MDIWindow?
+    var buddyListView: BuddyListView?
+    var imWindows: [String: MDIWindow] = [:]
+    var favoritesWindow: MDIWindow?
+    var favoritesView: FavoritesView?
+    var browserMonitor: Any?
+    let smoothScroller = SmoothScroller()
+    var lastOpenedLink: (url: URL, date: Date)?
+    var pendingLinks: [URL] = []
+    let windowRestore = WindowRestoreState()
 
     var desktop: DesktopView { shell.desktop }
     var activeWebPane: WebPane? { desktop.activeWindow?.content as? WebPane }
@@ -40,10 +49,15 @@ final class Session {
         self.config = ConfigStore.load()
         SoundManager.shared.enabled = config.soundsEnabled
         SoundManager.writeSoundsReadme()
+        Appearance.apply(darkWeb: config.darkWebPages, darkApp: config.darkTheme)
         buildChrome()
         setUpMail()
         setUpDiscord()
+        setUpSlack()
+        setUpMessenger()
+        setUpBrowserInput()
         desktop.onChange = { [weak self] in self?.refreshNav() }
+        setUpWindowRestore()
     }
 
     func start() {
@@ -144,13 +158,21 @@ final class Session {
         shell.statusBar.screenName = config.screenName
         SoundManager.shared.play(.welcome)
         if config.openAtSignOn.contains("mail") { mail.start() }
+        slack.start()
         for id in config.openAtSignOn where !["mail", "write", "buddylist"].contains(id) { openService(id, minimized: true) }
-        openWelcome()
-        openBuddyList()
+        if !restoreWindowLayout() {
+            openWelcome()
+            openBuddyList()
+        }
+        openPendingLinks()
+        if spotify.auth.isConnected { spotify.startPolling() }
+        refreshNowPlaying()
     }
 
     func signOff() {
         guard signedOn else { return }
+        saveWindowLayout()
+        forgetPendingWindows()
         SoundManager.shared.play(.goodbye)
         mail.stop()
         spotify.stopPolling()
@@ -163,11 +185,15 @@ final class Session {
         welcomeWindow = nil
         welcomePane = nil
         settingsWindow = nil
+        favoritesWindow = nil
+        favoritesView = nil
         showSignOn()
     }
 
     func quit() {
         guard signedOn else { NSApp.terminate(nil); return }
+        saveWindowLayout()
+        stopTerminals()
         SoundManager.shared.play(.goodbye)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { NSApp.terminate(nil) }
     }
@@ -189,11 +215,16 @@ final class Session {
     func openSettings() {
         guard signedOn else { return }
         if let w = settingsWindow, w.superview != nil { desktop.activate(w); return }
-        let view = SettingsView(config: config, auth: mail.auth, spotify: spotify.auth)
-        view.onConnectGmail = { [weak self] in self?.connectGmail() }
-        view.onDisconnectGmail = { [weak self] in self?.disconnectGmail() }
+        let view = SettingsView(config: config, mail: mail, spotify: spotify.auth)
+        view.onConnectGmail = { [weak self] hint in self?.connectGmail(hint: hint) }
+        view.onRemoveGmail = { [weak self] email in self?.removeGmail(email) }
+        view.onMakePrimaryGmail = { [weak self] email in self?.makePrimaryGmail(email) }
         view.onConnectSpotify = { [weak self] in self?.connectSpotify() }
         view.onDisconnectSpotify = { [weak self] in self?.disconnectSpotify() }
+        view.slack = slack
+        view.onConnectSlack = { [weak self] user, app in self?.connectSlack(userToken: user, appToken: app) }
+        view.onDisconnectSlack = { [weak self] in self?.disconnectSlack() }
+        view.onMakeDefaultBrowser = { [weak self] in self?.makeDefaultBrowser() }
         settingsView = view
         let window = MDIWindow(title: "Settings", icon: Icons.symbol("gearshape.fill", colors: [.white]), content: view)
         window.minSize = NSSize(width: 480, height: 330)
@@ -203,7 +234,7 @@ final class Session {
         }
         window.onClose = { [weak self] in self?.settingsWindow = nil; self?.settingsView = nil }
         settingsWindow = window
-        desktop.add(window, size: NSSize(width: 580, height: 600), centered: true)
+        desktop.add(window, size: NSSize(width: 580, height: 850), centered: true)
     }
 
     func updateConfig(_ change: (inout AOLConfig) -> Void) {
@@ -215,6 +246,7 @@ final class Session {
         config = newConfig
         ConfigStore.save(config)
         SoundManager.shared.enabled = config.soundsEnabled
+        Appearance.apply(darkWeb: config.darkWebPages, darkApp: config.darkTheme)
         shell.statusBar.screenName = config.screenName
     }
 
@@ -247,14 +279,20 @@ final class Session {
         window.focusView = pane.webView
         window.onClose = { [weak self, weak pane] in
             self?.serviceWindows[id] = nil
-            if let pane { self?.discord.paneClosed(pane) }
+            if let pane {
+                self?.discord.paneClosed(pane)
+                self?.messenger.paneClosed(pane)
+            }
         }
         if DiscordBridge.isDiscordHost(url.host) {
             window.minimizesOnClose = true
             discord.attach(pane)
+        } else if MessengerBridge.isMessengerService(service.url) {
+            window.minimizesOnClose = true
+            messenger.attach(pane)
         }
         serviceWindows[id] = window
-        desktop.add(window, minimized: minimized)
+        desktop.add(window, size: WebPane.windowSize, minimized: minimized)
     }
 
     private func promptForURL(_ service: ServiceDef) {
@@ -270,17 +308,19 @@ final class Session {
     }
 
     @discardableResult
-    func openBrowser(_ url: URL) -> WebPane {
-        let pane = WebPane(url: url, service: nil, session: self)
+    func openBrowser(_ url: URL, profile: String = "browser") -> WebPane {
+        let pane = WebPane(url: url, service: nil, session: self, profile: profile)
         let window = MDIWindow(title: url.host ?? "Browser", icon: Icons.symbol("globe", colors: [.white]), content: pane)
         pane.host = window
         window.focusView = pane.webView
-        desktop.add(window)
+        windowRestore.browserWindows.add(window)
+        desktop.add(window, size: WebPane.windowSize)
         return pane
     }
 
     func openPopup(configuration: WKWebViewConfiguration, from opener: WebPane, features: WKWindowFeatures) -> WKWebView {
-        let pane = WebPane(url: nil, service: opener.service, session: self, configuration: configuration)
+        let pane = WebPane(url: nil, service: opener.service, session: self, profile: opener.profile,
+                           configuration: configuration)
         let title = opener.service.map { "\($0.title) Popup" } ?? "Browser"
         let window = MDIWindow(title: title, icon: Icons.symbol("macwindow", colors: [.white]), content: pane)
         pane.host = window
@@ -292,7 +332,7 @@ final class Session {
     }
 
     func compose(mailto: URL) {
-        guard mail.auth.isConnected else {
+        guard mail.isConnected else {
             var c = URLComponents(string: "https://mail.google.com/mail/")!
             c.queryItems = [URLQueryItem(name: "extsrc", value: "mailto"), URLQueryItem(name: "url", value: mailto.absoluteString)]
             if let url = c.url { openBrowser(url) }
@@ -325,6 +365,12 @@ final class Session {
             openBuddyList()
         } else if ["chat rooms", "chatrooms", "rooms", "find a chat", "people connection"].contains(key) {
             openChatRooms()
+        } else if ["favorites", "favorite places", "bookmarks"].contains(key) {
+            openFavorites()
+        } else if ["claude", "claude code", "claudecode"].contains(key) {
+            openClaudeCode()
+        } else if ["terminal", "shell"].contains(key) {
+            openTerminal()
         } else if key == "spotify web" {
             openService("spotify", web: true)
         } else if let target = config.keywords[key] {
@@ -332,11 +378,7 @@ final class Session {
         } else if config.service(key) != nil || key == "welcome" || key == "settings" {
             openService(key)
         } else if let url = Self.webURL(from: text) {
-            if let pane = activeWebPane, pane.service == nil {
-                pane.webView.load(URLRequest(url: url))
-            } else {
-                openBrowser(url)
-            }
+            openBrowser(url)
         } else {
             var c = URLComponents(string: "https://www.google.com/search")!
             c.queryItems = [URLQueryItem(name: "q", value: text)]
@@ -404,12 +446,16 @@ final class Session {
             nav.back.isEnabled = signedOn && pane.webView.canGoBack
             nav.forward.isEnabled = signedOn && pane.webView.canGoForward
             nav.isLoading = pane.webView.isLoading
+            nav.favorite.isEnabled = signedOn && currentPage != nil
+            nav.isFavorite = isFavorite(pane.webView.url)
             shell.statusBar.status = pane.webView.isLoading ? "Loading \(pane.webView.url?.host ?? "")..." : "Done"
         } else {
             if nav.address.currentEditor() == nil { nav.address.stringValue = "" }
             nav.back.isEnabled = false
             nav.forward.isEnabled = false
             nav.isLoading = false
+            nav.favorite.isEnabled = false
+            nav.isFavorite = false
             shell.statusBar.status = signedOn ? "Done" : shell.statusBar.status
         }
     }
@@ -449,6 +495,7 @@ final class Session {
                 let menu = NSMenu()
                 menu.addItem(ActionItem("Buddy List") { [weak self] in self?.openBuddyList() })
                 menu.addItem(ActionItem("Chat Rooms") { [weak self] in self?.openChatRooms() })
+                if let favorites = self?.favoriteRoomsMenuItem() { menu.addItem(favorites) }
                 menu.addItem(ActionItem("People Connection") { [weak self] in self?.openService("chat") })
                 menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
             },
@@ -464,27 +511,49 @@ final class Session {
             },
             button("Finance", "finance", "dollarsign.circle.fill", green) { [weak self] _ in self?.openService("finance") },
         ]
-        let expressions = button("Expressions", "expressions", "paintpalette.fill", gold) { _ in }
         let greetings = button("Greetings", "greetings", "heart.text.square.fill", blue) { _ in }
-        for unavailable in [expressions, greetings] {
-            unavailable.available = false
-            unavailable.toolTip = "Not available yet"
-        }
+        greetings.available = false
+        greetings.toolTip = "Not available yet"
         shell.toolbar.groupItems = [
             button("Pictures", "pictures", "photo.on.rectangle", blue) { [weak self] _ in self?.openService("photos") },
-            expressions,
-            button("Buzzline", "buzzline", "bubble.left.fill", gold) { [weak self] _ in self?.openService("news") },
-            button("Remind Me", "remindme", "hand.point.up.fill", red) { [weak self] _ in self?.openService("calendar") },
             greetings,
-            button("Moviefone", "moviefone", "popcorn.fill", red) { [weak self] _ in self?.openService("movies") },
+            button("Claude", "claude", "sparkle", Theme.rgb(217, 119, 87)) { [weak self] b in
+                guard let self, self.signedOn else { NSSound.beep(); return }
+                self.claudeCodeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+            },
+            button("Entertainment", "moviefone", "popcorn.fill", red) { [weak self] b in
+                guard let self else { return }
+                let services = AOLConfig.entertainmentServices.compactMap { self.config.service($0) }
+                @MainActor func item(_ service: ServiceDef) -> NSMenuItem {
+                    let item = ActionItem(service.title) { [weak self] in self?.openService(service.id) }
+                    item.image = Icons.symbol(service.icon, size: 13, colors: [Theme.aolBlue])
+                    return item
+                }
+                let menu = NSMenu()
+                services.prefix(4).forEach { menu.addItem(item($0)) }
+                if services.count > 4 {
+                    let more = NSMenu()
+                    services.dropFirst(4).forEach { more.addItem(item($0)) }
+                    let moreItem = NSMenuItem(title: "More...", action: nil, keyEquivalent: "")
+                    moreItem.submenu = more
+                    menu.addItem(.separator())
+                    menu.addItem(moreItem)
+                }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+            },
+            button("Favorites", "favorites", "heart.fill", red) { [weak self] b in
+                self?.favoritesMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+            },
         ]
         shell.toolbar.customize.action = { [weak self] in self?.openSettings() }
+        setUpNowPlaying()
 
         let nav = shell.navBar
         nav.welcome.action = { [weak self] in self?.openWelcome() }
         nav.back.action = { [weak self] in self?.back() }
         nav.forward.action = { [weak self] in self?.forward() }
         nav.reload.action = { [weak self] in self?.reloadOrStop() }
+        nav.favorite.action = { [weak self] in self?.addFavorite() }
         nav.address.onSubmit = { [weak self] text in self?.go(text) }
         nav.go.action = { [weak self] in self.map { $0.go($0.shell.navBar.address.stringValue) } }
         nav.search.action = { [weak self] in self?.promptKeyword() }

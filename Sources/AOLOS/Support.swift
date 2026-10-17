@@ -101,3 +101,21 @@ enum Prompt {
         return value.isEmpty ? nil : value
     }
 }
+
+/// Sets WebKit features that WKPreferences does not expose. Uses WebKit SPI, so a missing selector or feature is skipped.
+@MainActor
+enum WebFeatures {
+    /// `PreferPageRenderingUpdatesNear60FPSEnabled` (on by default) caps page rendering near 60 fps. On a 100 Hz or
+    /// 120 Hz display 60 fps lands unevenly on the refreshes, so scrolling and animation judder; turned off, pages
+    /// render at the display's rate.
+    static func set(_ key: String, _ enabled: Bool, in preferences: WKPreferences) {
+        let list = Selector(("_features"))
+        let set = Selector(("_setEnabled:forFeature:"))
+        guard (WKPreferences.self as AnyObject).responds(to: list), preferences.responds(to: set),
+              let features = (WKPreferences.self as AnyObject).perform(list)?.takeUnretainedValue() as? [NSObject],
+              let feature = features.first(where: { $0.value(forKey: "key") as? String == key }) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let setter = unsafeBitCast(preferences.method(for: set), to: Setter.self)
+        setter(preferences, set, enabled, feature)
+    }
+}

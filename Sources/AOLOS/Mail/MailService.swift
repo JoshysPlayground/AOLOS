@@ -1,19 +1,23 @@
 import Foundation
 
-/// Gmail over IMAP and SMTP. One connection runs commands, a second one sits in IDLE on INBOX.
+/// One Gmail account over IMAP and SMTP. One connection runs commands, a second one sits in IDLE on INBOX.
+/// Every summary it returns carries the account address, so MailCenter can route actions back here.
 @MainActor
 final class MailService {
     enum Box: Int, CaseIterable {
         case new, old, sent
     }
 
-    let auth = GoogleAuth()
+    let auth: GoogleAuth
+    var email: String { auth.email }
     private(set) var inbox: [MailSummary] = []
     private(set) var sent: [MailSummary] = []
     private(set) var unreadCount = 0
     private(set) var status = "Not connected"
     private(set) var isRunning = false
     private(set) var hasLoaded = false
+    /// The last error that stopped or interrupted this account, cleared by the next good refresh.
+    private(set) var lastError: String?
 
     var onChange: (() -> Void)?
     var onNewMail: (() -> Void)?
@@ -21,6 +25,8 @@ final class MailService {
     private var connection: IMAPConnection?
     private var idleConnection: IMAPConnection?
     private var idleTask: Task<Void, Never>?
+    private var pollTask: Task<Void, Never>?
+    private var lastChecked = Date.distantPast
     private var tail: Task<Void, Never>?
     private(set) var folders = MailFolders()
     private(set) var folderMessages: [String: [MailSummary]] = [:]
@@ -32,6 +38,22 @@ final class MailService {
     static let inboxLimit = 300
     static let sentLimit = 100
     static let folderLimit = 150
+    /// IDLE can go quiet without an error (sleep, Wi-Fi changes, a half-open socket), so INBOX is also checked on a timer.
+    static let pollInterval: TimeInterval = 120
+    /// A check that takes longer than this is treated as a dead connection.
+    static let checkTimeout: TimeInterval = 90
+
+    init(email: String) {
+        auth = GoogleAuth(email: email)
+    }
+
+    private func tagged(_ list: [MailSummary]) -> [MailSummary] {
+        list.map { s in
+            var s = s
+            s.account = email
+            return s
+        }
+    }
 
     func summaries(for box: Box) -> [MailSummary] {
         switch box {
@@ -44,8 +66,10 @@ final class MailService {
     func start() {
         guard auth.isConnected, !isRunning else { return }
         isRunning = true
-        setStatus("Connecting to Gmail...")
+        lastError = nil
+        setStatus("Connecting to \(email)...")
         idleTask = Task { [weak self] in await self?.idleLoop() }
+        pollTask = Task { [weak self] in await self?.pollLoop() }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -61,6 +85,8 @@ final class MailService {
         isRunning = false
         idleTask?.cancel()
         idleTask = nil
+        pollTask?.cancel()
+        pollTask = nil
         let connections = [connection, idleConnection].compactMap { $0 }
         connection = nil
         idleConnection = nil
@@ -73,10 +99,13 @@ final class MailService {
         knownUnseen = []
         hasLoaded = false
         foldersLoaded = false
+        lastError = nil
         setStatus(auth.isConnected ? "Signed off" : "Not connected")
     }
 
-    func refresh() async throws {
+    /// Returns true when unread mail arrived that this account had not seen before.
+    @discardableResult
+    func refresh() async throws -> Bool {
         let result = try await serial { c -> (summaries: [MailSummary], unseen: Set<UInt32>) in
             if !self.foldersLoaded {
                 self.folders = try await c.specialFolders()
@@ -88,14 +117,59 @@ final class MailService {
             let summaries = try await c.fetchSummaries(Array(all.suffix(Self.inboxLimit)))
             return (summaries, unseen)
         }
-        inbox = result.summaries.sorted { $0.date > $1.date }
+        inbox = tagged(result.summaries).sorted { $0.date > $1.date }
         unreadCount = result.unseen.count
         let arrived = result.unseen.subtracting(knownUnseen)
         let firstLoad = !hasLoaded
         knownUnseen = result.unseen
         hasLoaded = true
-        setStatus(auth.email.map { "Connected as \($0)" } ?? "Connected")
+        lastChecked = Date()
+        lastError = nil
+        setStatus("Connected as \(email)")
         if (firstLoad && unreadCount > 0) || (!firstLoad && !arrived.isEmpty) { onNewMail?() }
+        return !firstLoad && !arrived.isEmpty
+    }
+
+    /// Checks INBOX now with a watchdog. A check that hangs drops both connections so they reopen fresh.
+    /// New mail found here instead of through IDLE means the IDLE connection went deaf, so it is reopened too.
+    func check(reconnect: Bool = false) async {
+        guard isRunning, auth.isConnected else { return }
+        if reconnect { dropConnections() }
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.checkTimeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.dropConnections()
+        }
+        defer { watchdog.cancel() }
+        do {
+            if try await refresh(), !reconnect { dropIdleConnection() }
+        } catch {
+            handle(error)
+        }
+    }
+
+    /// Closes the open sockets. Reads waiting on them fail, the command connection reopens on next use,
+    /// and the IDLE loop reconnects on its own.
+    func dropConnections() {
+        if let c = connection {
+            connection = nil
+            Task { await c.close() }
+        }
+        dropIdleConnection()
+    }
+
+    private func dropIdleConnection() {
+        if let c = idleConnection { Task { await c.close() } }
+    }
+
+    private func pollLoop() async {
+        while isRunning, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(Self.pollInterval * 1_000_000_000))
+            guard isRunning, !Task.isCancelled else { return }
+            // Skip when IDLE or the user just checked.
+            if Date().timeIntervalSince(lastChecked) < Self.pollInterval / 2 { continue }
+            await check()
+        }
     }
 
     func refreshSent() async throws {
@@ -104,7 +178,7 @@ final class MailService {
             let all = try await c.uidSearch("ALL")
             return try await c.fetchSummaries(Array(all.suffix(Self.sentLimit)))
         }
-        sent = summaries.sorted { $0.date > $1.date }
+        sent = tagged(summaries).sorted { $0.date > $1.date }
         onChange?()
     }
 
@@ -114,7 +188,7 @@ final class MailService {
             let all = try await c.uidSearch("ALL")
             return try await c.fetchSummaries(Array(all.suffix(Self.folderLimit)))
         }
-        folderMessages[name] = summaries.sorted { $0.date > $1.date }
+        folderMessages[name] = tagged(summaries).sorted { $0.date > $1.date }
         onChange?()
     }
 
@@ -133,7 +207,7 @@ final class MailService {
             let hits = try await c.uidSearch("X-GM-RAW \(IMAPParser.quote(q))")
             return try await c.fetchSummaries(Array(hits.suffix(Self.folderLimit)))
         }
-        searchResults = summaries.sorted { $0.date > $1.date }
+        searchResults = tagged(summaries).sorted { $0.date > $1.date }
         onChange?()
     }
 
@@ -205,7 +279,6 @@ final class MailService {
     }
 
     func send(_ mail: OutgoingMail) async throws {
-        guard let email = auth.email else { throw MailError.notConnected }
         let token = try await auth.token()
         try await SMTPClient.send(mail, email: email, token: token)
         Task { [weak self] in try? await self?.refreshSent() }
@@ -232,8 +305,11 @@ final class MailService {
         if case MailError.auth(let reason) = error {
             isRunning = false
             idleTask?.cancel()
+            pollTask?.cancel()
+            lastError = reason
             setStatus(reason)
         } else {
+            lastError = "\(email): \(error.localizedDescription)"
             setStatus("Mail error: \(error.localizedDescription)")
         }
     }
@@ -276,7 +352,6 @@ final class MailService {
 
     private func openConnection() async throws -> IMAPConnection {
         let token = try await auth.token()
-        guard let email = auth.email else { throw MailError.notConnected }
         let c = IMAPConnection()
         try await c.open()
         try await c.authenticate(email: email, token: token)
@@ -294,7 +369,7 @@ final class MailService {
                 while isRunning, !Task.isCancelled {
                     // RFC 3501 section 5.4 lets servers drop a client idle for 30 minutes, so IDLE is renewed sooner.
                     if try await c.idle(timeout: 20 * 60) {
-                        try? await refresh()
+                        _ = try? await refresh()
                     }
                 }
             } catch {
@@ -305,7 +380,7 @@ final class MailService {
                     handle(error)
                     return
                 }
-                setStatus("Reconnecting to Gmail...")
+                setStatus("Reconnecting to \(email)...")
                 try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                 delay = min(delay * 2, 120)
             }

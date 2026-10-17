@@ -146,6 +146,7 @@ final class QuickReadView: FlippedView, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         webView = WKWebView(frame: .zero, configuration: config)
+        Appearance.track(webView)
         super.init(frame: frame)
         webView.navigationDelegate = self
         fullView.action = { [weak self] in self?.onFullView?() }
@@ -165,7 +166,7 @@ final class QuickReadView: FlippedView, WKNavigationDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         Theme.gradient([Theme.rgb(226, 237, 252), Theme.rgb(190, 212, 242)], in: NSRect(x: 0, y: 0, width: bounds.width, height: 28))
         Theme.toolbarLine.setFill()
@@ -226,7 +227,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
 
     enum Source: Equatable {
         case box(MailService.Box)
-        case folder(String)
+        case folder(account: String, name: String)
         case search
     }
 
@@ -245,10 +246,12 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     private enum FolderRow {
         case heading(String)
         case box(MailService.Box)
-        case label(MailFolderInfo)
+        case label(String, MailFolderInfo)
     }
 
-    let mail: MailService
+    let mail: MailCenter
+    /// The account the Mailbox is filtered to. Nil shows every account together.
+    private(set) var account: String?
     var onAction: ((Action, [MailSummary]) -> Void)?
     var onOpen: ((MailSummary) -> Void)?
     var onOpenLink: ((URL) -> Void)?
@@ -259,6 +262,9 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     private let showLabel = NSTextField(labelWithString: "Show mail from:")
     private let findLabel = NSTextField(labelWithString: "Quick find:")
     private let findField = NSSearchField()
+    private let accountLabel = NSTextField(labelWithString: "Account:")
+    private let accountPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private var accountItems: [String] = []
     private let folderTable = NSTableView()
     private let folderScroll = NSScrollView()
     private let folderTitle = GradientView(colors: [Theme.rgb(226, 237, 252), Theme.rgb(190, 212, 242)])
@@ -284,7 +290,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         table.selectedRowIndexes.filter { $0 < rows.count }.map { rows[$0] }
     }
 
-    init(mail: MailService) {
+    init(mail: MailCenter) {
         self.mail = mail
         super.init(frame: .zero)
 
@@ -292,10 +298,14 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         header.onSelect = { [weak self] i in self?.selectTab(i) }
         header.onMenu = { [weak self] i, point in self?.showHeaderMenu(i, at: point) }
 
-        [showLabel, findLabel].forEach {
+        [showLabel, findLabel, accountLabel].forEach {
             $0.font = Theme.ui(11, bold: true)
             $0.textColor = Theme.rgb(0, 40, 130)
         }
+        accountPopup.controlSize = .small
+        accountPopup.font = Theme.ui(11)
+        accountPopup.target = self
+        accountPopup.action = #selector(accountChosen)
         showPopup.addItems(withTitles: Filter.allCases.map(\.title))
         showPopup.controlSize = .small
         showPopup.font = Theme.ui(11)
@@ -308,7 +318,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         findField.sendsWholeSearchString = true
         findField.target = self
         findField.action = #selector(findCommitted)
-        [showLabel, showPopup, findLabel, findField].forEach(filterStrip.addSubview)
+        [showLabel, showPopup, accountLabel, accountPopup, findLabel, findField].forEach(filterStrip.addSubview)
 
         let folderLabel = NSTextField(labelWithString: "My Mail Folders")
         folderLabel.font = Theme.ui(12, bold: true)
@@ -330,12 +340,15 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         folderScroll.borderType = .noBorder
         folderScroll.drawsBackground = false
 
-        for (id, title, width) in [("flag", "", 26.0), ("date", "Date", 84.0), ("who", "Name", 200.0), ("subject", "Subject", 400.0)] {
+        for (id, title, width) in [("flag", "", 26.0), ("account", "", 24.0), ("date", "Date", 84.0), ("who", "Name", 200.0),
+                                   ("subject", "Subject", 400.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             column.title = title
             column.width = width
-            column.minWidth = id == "flag" ? 26 : 60
-            if id == "flag" { column.maxWidth = 26 }
+            let narrow = id == "flag" || id == "account"
+            column.minWidth = narrow ? width : 60
+            if narrow { column.maxWidth = width }
+            if id == "account" { column.headerToolTip = "Account" }
             table.addTableColumn(column)
         }
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
@@ -401,9 +414,11 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         filterStrip.frame = NSRect(x: 0, y: 32, width: bounds.width, height: 32)
         showLabel.frame = NSRect(x: 10, y: 8, width: 100, height: 16)
         showPopup.frame = NSRect(x: 108, y: 5, width: 130, height: 22)
-        let fw = min(260, max(120, bounds.width - 420))
+        let fw = min(260, max(120, bounds.width - (accountPopup.isHidden ? 420 : 680)))
         findField.frame = NSRect(x: bounds.width - fw - 10, y: 6, width: fw, height: 20)
         findLabel.frame = NSRect(x: findField.frame.minX - 76, y: 8, width: 72, height: 16)
+        accountLabel.frame = NSRect(x: 250, y: 8, width: 56, height: 16)
+        accountPopup.frame = NSRect(x: 306, y: 5, width: max(100, min(240, findLabel.frame.minX - 316)), height: 22)
 
         bar.frame = NSRect(x: 0, y: bounds.height - 40, width: bounds.width, height: 40)
         let top: CGFloat = 64
@@ -434,7 +449,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         Theme.gradient([Theme.rgb(246, 250, 255), Theme.rgb(222, 234, 250)], in: filterStrip.frame)
         Theme.toolbarLine.setFill()
@@ -449,22 +464,27 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func reload() {
+        syncAccounts()
         let selectedKeys = Set(selectedSummaries.map(Self.key))
-        let newCount = mail.summaries(for: .new).count
+        let newCount = mail.summaries(for: .new, account: account).count
         header.titles = [newCount > 0 ? "New (\(newCount))" : "New", "Old", "Sent", "Manage Mail", "Search Mail"]
         header.selected = tabIndex
         findField.placeholderString = source == .search ? "Search all mail, then press Return" : "Name or subject"
 
         rows = filtered(baseRows())
         table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("who"))?.title = showsRecipient ? "Sent To" : "Name"
+        table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("account"))?.isHidden = !showsBadges
         table.reloadData()
         let keep = IndexSet(rows.indices.filter { selectedKeys.contains(Self.key(rows[$0])) })
         table.selectRowIndexes(keep, byExtendingSelection: false)
 
         folderRows = [.heading("Mailbox"), .box(.new), .box(.old), .box(.sent)]
-        let labels = mail.folders.list.filter { $0.name != "INBOX" && $0.name != mail.folders.sent }
-        if !labels.isEmpty { folderRows.append(.heading("Gmail Folders")) }
-        folderRows += labels.map(FolderRow.label)
+        for service in visibleAccounts {
+            let labels = Self.labels(service)
+            guard !labels.isEmpty else { continue }
+            folderRows.append(.heading(mail.accounts.count > 1 ? service.email : "Gmail Folders"))
+            folderRows += labels.map { FolderRow.label(service.email, $0) }
+        }
         folderTable.reloadData()
         if let i = folderRows.firstIndex(where: { isCurrent($0) }) {
             folderTable.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
@@ -472,10 +492,10 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
             folderTable.deselectAll(nil)
         }
 
-        let connected = mail.auth.isConnected
+        let connected = mail.isConnected
         connectPanel.isHidden = connected
         split.isHidden = !connected
-        connectLabel.stringValue = mail.auth.hasClient
+        connectLabel.stringValue = mail.hasClient
             ? "Gmail is not connected. Sign in with Google to read your mail here."
             : "This build has no Google OAuth client. Add one in Settings, then connect."
 
@@ -483,7 +503,63 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         updatePreview()
     }
 
-    private static func key(_ s: MailSummary) -> String { "\(s.folder)/\(s.uid)" }
+    private static func key(_ s: MailSummary) -> String { "\(s.account)/\(s.folder)/\(s.uid)" }
+
+    private static func labels(_ service: MailService) -> [MailFolderInfo] {
+        service.folders.list.filter { $0.name != "INBOX" && $0.name != service.folders.sent }
+    }
+
+    private var visibleAccounts: [MailService] {
+        guard let account else { return mail.accounts }
+        return mail.service(account).map { [$0] } ?? []
+    }
+
+    /// Badges tell accounts apart when the Mailbox shows more than one.
+    private var showsBadges: Bool { mail.accounts.count > 1 && account == nil }
+
+    /// Keeps the account menu in step with Settings and drops a filter whose account was removed.
+    private func syncAccounts() {
+        let emails = mail.emails
+        if let current = account, !emails.contains(where: { $0.caseInsensitiveCompare(current) == .orderedSame }) {
+            account = nil
+            if case .folder = source { source = .box(.new) }
+        }
+        if emails != accountItems {
+            accountItems = emails
+            accountPopup.removeAllItems()
+            accountPopup.addItem(withTitle: "All Accounts")
+            for email in emails {
+                accountPopup.addItem(withTitle: email)
+                accountPopup.lastItem?.image = Self.badge(email, color: mail.badgeColor(email))
+            }
+            needsLayout = true
+        }
+        let hidden = emails.count < 2
+        if accountPopup.isHidden != hidden {
+            accountPopup.isHidden = hidden
+            accountLabel.isHidden = hidden
+            needsLayout = true
+        }
+        if let account, let i = emails.firstIndex(where: { $0.caseInsensitiveCompare(account) == .orderedSame }) {
+            accountPopup.selectItem(at: i + 1)
+        } else {
+            accountPopup.selectItem(at: 0)
+        }
+    }
+
+    /// A colored disc with the account's first letter.
+    static func badge(_ email: String, color: NSColor, size: CGFloat = 14) -> NSImage {
+        let letter = String(email.first.map { Character($0.uppercased()) } ?? "?")
+        return NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: size * 0.62), .foregroundColor: NSColor.white]
+            let text = letter as NSString
+            let t = text.size(withAttributes: attrs)
+            text.draw(at: NSPoint(x: rect.midX - t.width / 2, y: rect.midY - t.height / 2), withAttributes: attrs)
+            return true
+        }
+    }
 
     private var tabIndex: Int {
         switch source {
@@ -496,7 +572,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     private var showsRecipient: Bool {
         switch source {
         case .box(let box): return box == .sent
-        case .folder(let name): return name == mail.folders.sent
+        case .folder(let acct, let name): return name == mail.service(acct)?.folders.sent
         case .search: return false
         }
     }
@@ -504,16 +580,16 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     private func isCurrent(_ row: FolderRow) -> Bool {
         switch (row, source) {
         case (.box(let a), .box(let b)): return a == b
-        case (.label(let info), .folder(let name)): return info.name == name
+        case (.label(let a, let info), .folder(let b, let name)): return a == b && info.name == name
         default: return false
         }
     }
 
     private func baseRows() -> [MailSummary] {
         switch source {
-        case .box(let box): return mail.summaries(for: box)
-        case .folder(let name): return mail.folderMessages[name] ?? []
-        case .search: return mail.searchResults
+        case .box(let box): return mail.summaries(for: box, account: account)
+        case .folder(let acct, let name): return mail.service(acct)?.folderMessages[name] ?? []
+        case .search: return mail.searchResults(account: account)
         }
     }
 
@@ -535,8 +611,8 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         switch i {
         case 0, 1, 2: show(.box(MailService.Box(rawValue: i) ?? .new))
         case 3:
-            let first = mail.folders.list.first { $0.name != "INBOX" && $0.name != mail.folders.sent }
-            if let first { show(.folder(first.name)) } else { header.selected = tabIndex }
+            let first = visibleAccounts.lazy.compactMap { s in Self.labels(s).first.map { (s.email, $0.name) } }.first
+            if let first { show(.folder(account: first.0, name: first.1)) } else { header.selected = tabIndex }
         default:
             show(.search)
             window?.makeFirstResponder(findField)
@@ -553,17 +629,19 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         } else if leavingSearch {
             findField.stringValue = ""
         }
-        if case .folder(let name) = newSource, mail.folderMessages[name] == nil { load(name) }
+        if case .folder(let acct, let name) = newSource, let service = mail.service(acct), service.folderMessages[name] == nil {
+            load(name, in: service)
+        }
         reload()
     }
 
-    private func load(_ folder: String) {
+    private func load(_ folder: String, in service: MailService) {
         loadingFolder = folder
         updateButtons()
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.mail.loadFolder(folder)
+                try await service.loadFolder(folder)
             } catch {
                 self.searchError = error.localizedDescription
             }
@@ -577,12 +655,13 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         if index == 0 {
             menu.addItem(ActionItem("Write Mail") { [weak self] in self?.onAction?(.write, []) })
             menu.addItem(ActionItem("Check Mail Now") { [weak self] in self?.onAction?(.refresh, []) })
-            let unread = mail.summaries(for: .new)
+            let unread = mail.summaries(for: .new, account: account)
             let markAll = ActionItem("Mark All New Mail as Read") { [weak self] in self?.onAction?(.markRead, unread) }
             markAll.isEnabled = !unread.isEmpty
             menu.addItem(markAll)
             menu.addItem(.separator())
             menu.addItem(ActionItem("Open Gmail on the Web") { [weak self] in self?.onAction?(.webGmail, []) })
+            menu.addItem(ActionItem("Add Gmail Account...") { [weak self] in self?.onAction?(.connect, []) })
         } else {
             menu.addItem(ActionItem("Search Mail Tips") { [weak self] in
                 self?.onOpenLink?(URL(string: "https://support.google.com/mail/answer/7190")!)
@@ -590,6 +669,16 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         }
         menu.autoenablesItems = false
         menu.popUp(positioning: nil, at: point, in: header)
+    }
+
+    @objc private func accountChosen() {
+        let i = accountPopup.indexOfSelectedItem
+        let chosen = i > 0 && i - 1 < accountItems.count ? accountItems[i - 1] : nil
+        guard chosen != account else { return }
+        account = chosen
+        if case .folder(let acct, _) = source, let chosen, acct != chosen { source = .box(.new) }
+        searchError = nil
+        reload()
     }
 
     @objc private func filterChosen() {
@@ -610,7 +699,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.mail.search(query)
+                try await self.mail.search(query, account: self.account)
             } catch {
                 self.searchError = error.localizedDescription
             }
@@ -620,14 +709,15 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private func enabled(_ action: Action, for selection: [MailSummary]) -> Bool {
-        guard mail.auth.isConnected else { return false }
+        guard mail.isConnected else { return false }
         switch action {
         case .write, .refresh, .connect, .webGmail: return true
         case .read, .delete: return !selection.isEmpty
         case .reply, .forward: return selection.count == 1
         case .markRead: return selection.contains { !$0.seen }
         case .keepAsNew: return !showsRecipient && selection.contains { $0.seen }
-        case .reportSpam: return !showsRecipient && !selection.isEmpty && !selection.contains { $0.folder == mail.folders.junk }
+        case .reportSpam:
+            return !showsRecipient && !selection.isEmpty && !selection.contains { $0.folder == mail.service(for: $0)?.folders.junk }
         }
     }
 
@@ -646,7 +736,15 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
             status = "\(count) message\(count == 1 ? "" : "s")"
             if selection.count > 1 { status += ", \(selection.count) selected" }
         }
-        bar.statusLabel.stringValue = mail.auth.isConnected ? status : mail.status
+        if loadingFolder == nil, searchError == nil {
+            let signedOut = mail.signedOut
+            if !signedOut.isEmpty {
+                status += ". Reconnect \(signedOut.joined(separator: ", ")) in Settings"
+            } else if let problem = mail.problems.first {
+                status += ". \(problem)"
+            }
+        }
+        bar.statusLabel.stringValue = mail.isConnected ? status : mail.status
     }
 
     private func updatePreview() {
@@ -728,7 +826,7 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
             switch folderRows[row] {
             case .heading: break
             case .box(let box): show(.box(box))
-            case .label(let info): show(.folder(info.name))
+            case .label(let acct, let info): show(.folder(account: acct, name: info.name))
             }
             return
         }
@@ -741,6 +839,18 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         guard row < rows.count else { return nil }
         let s = rows[row]
         let id = tableColumn?.identifier.rawValue ?? ""
+
+        if id == "account" {
+            let image = tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("accountCell"), owner: nil) as? NSImageView
+                ?? {
+                    let v = NSImageView()
+                    v.identifier = NSUserInterfaceItemIdentifier("accountCell")
+                    return v
+                }()
+            image.image = Self.badge(s.account, color: mail.badgeColor(s.account))
+            image.toolTip = s.account
+            return image
+        }
 
         if id == "flag" {
             let image = tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("flagCell"), owner: nil) as? NSImageView
@@ -784,18 +894,19 @@ final class MailboxView: FlippedView, NSTableViewDataSource, NSTableViewDelegate
         case .heading(let title):
             cell.configure(title: title, symbol: nil, indent: 0, bold: true, heading: true)
         case .box(let box):
-            let unread = mail.summaries(for: .new).count
+            let unread = mail.summaries(for: .new, account: account).count
             switch box {
             case .new: cell.configure(title: unread > 0 ? "New Mail (\(unread))" : "New Mail", symbol: "envelope.fill", indent: 1, bold: unread > 0)
             case .old: cell.configure(title: "Old Mail", symbol: "envelope.open", indent: 1)
             case .sent: cell.configure(title: "Sent Mail", symbol: "paperplane", indent: 1)
             }
-        case .label(let info):
+        case .label(let acct, let info):
+            let folders = mail.service(acct)?.folders ?? MailFolders()
             let symbol: String
             switch info.name {
-            case mail.folders.trash: symbol = "trash"
-            case mail.folders.junk: symbol = "hand.raised"
-            case mail.folders.allMail: symbol = "tray.full"
+            case folders.trash: symbol = "trash"
+            case folders.junk: symbol = "hand.raised"
+            case folders.allMail: symbol = "tray.full"
             default: symbol = info.attributes.contains("\\drafts") ? "doc.text" : "folder"
             }
             cell.configure(title: info.leafName, symbol: symbol, indent: 1 + info.depth)

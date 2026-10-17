@@ -23,6 +23,7 @@ final class WelcomePane: FlippedView, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         config.userContentController.add(handler, name: "welcome")
         webView = WKWebView(frame: .zero, configuration: config)
+        Appearance.track(webView)
         super.init(frame: .zero)
         handler.session = session
         webView.navigationDelegate = self

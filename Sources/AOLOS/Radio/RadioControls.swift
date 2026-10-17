@@ -54,7 +54,7 @@ final class RadioPanel: FlippedView {
 
     override func draw(_ dirtyRect: NSRect) {
         let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         outline.fill()
         NSGraphicsContext.saveGraphicsState()
         outline.addClip()
@@ -163,7 +163,7 @@ final class StationRowView: FlippedView {
         switch row {
         case .category(let category, let expanded, let count):
             let box = NSRect(x: 4, y: (bounds.height - 9) / 2, width: 9, height: 9)
-            NSColor.white.setFill()
+            Theme.paper.setFill()
             box.fill()
             Theme.mutedText.setStroke()
             NSBezierPath(rect: box.insetBy(dx: 0.5, dy: 0.5)).stroke()

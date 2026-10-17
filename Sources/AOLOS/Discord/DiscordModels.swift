@@ -45,18 +45,9 @@ struct Buddy: Equatable {
     }
 }
 
-/// A presence change worth announcing with a sound.
+/// A presence change worth announcing in the status bar.
 enum BuddyChange: Equatable {
     case signedOn, signedOff, away, back
-
-    var sound: SoundEvent {
-        switch self {
-        case .signedOn: return .buddyIn
-        case .signedOff: return .buddyOut
-        case .away: return .doorClose
-        case .back: return .doorOpen
-        }
-    }
 
     var verb: String {
         switch self {
@@ -211,6 +202,8 @@ struct ChatRoom: Equatable {
     let id: String
     let name: String
     let category: String
+    /// The Discord category channel, or a fixed ID per Slack channel kind. Empty when the room has no category.
+    let categoryID: String
     let unread: Bool
     let voice: Bool
     /// Who is in a voice channel right now.
@@ -223,11 +216,31 @@ struct ChatRoom: Equatable {
         self.id = id
         name = json["name"] as? String ?? id
         category = json["category"] as? String ?? ""
+        categoryID = json["categoryId"] as? String ?? ""
         unread = json["unread"] as? Bool ?? false
         voice = json["voice"] as? Bool ?? false
         people = json["people"] as? [String] ?? []
         joined = json["joined"] as? Bool ?? false
     }
+}
+
+/// Server, category and room IDs whose new messages do not open a chat room window.
+enum ChatMute {
+    static func isMuted(_ room: ChatRoom, in server: ChatServer, muted: [String]) -> Bool {
+        muted.contains(room.id) || muted.contains(server.id) || (!room.categoryID.isEmpty && muted.contains(room.categoryID))
+    }
+}
+
+/// A chat room saved to People > Favorites. Names are kept so the menu works before Discord loads.
+struct FavoriteRoom: Codable, Equatable {
+    var id: String
+    var name: String
+    var serverID: String
+    var serverName: String
+    var voice = false
+
+    /// "{Server Name} - {Channel}", as shown in the Favorites menu.
+    var title: String { serverName.isEmpty ? "#\(name)" : "\(serverName) - #\(name)" }
 }
 
 /// Who a message goes to: one person, or a group chat channel.
@@ -257,6 +270,19 @@ enum RecentBuddies {
     static func pick(_ recent: [Buddy], hidden: Set<String>) -> [Buddy] {
         var seen = Set<String>()
         return Array(recent.filter { !hidden.contains($0.id) && seen.insert($0.id).inserted }.prefix(limit))
+    }
+}
+
+extension RecentBuddies {
+    /// Alternates two most-recent-first lists. Services do not share timestamps, so neither list crowds out the other.
+    static func interleave<T>(_ a: [T], _ b: [T]) -> [T] {
+        var out: [T] = []
+        out.reserveCapacity(a.count + b.count)
+        for i in 0..<max(a.count, b.count) {
+            if i < a.count { out.append(a[i]) }
+            if i < b.count { out.append(b[i]) }
+        }
+        return out
     }
 }
 

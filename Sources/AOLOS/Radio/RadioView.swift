@@ -65,7 +65,7 @@ final class RadioView: FlippedView, NSTableViewDataSource, NSTableViewDelegate {
         table.rowHeight = 18
         table.intercellSpacing = NSSize(width: 0, height: 1)
         table.selectionHighlightStyle = .none
-        table.backgroundColor = .white
+        table.backgroundColor = Theme.paper
         table.dataSource = self
         table.delegate = self
         table.target = self

@@ -35,6 +35,8 @@ final class BuddyTreeView: FlippedView {
     var onMenu: ((Buddy, NSEvent, NSView) -> Void)?
     var onGroupMenu: ((NSEvent, NSView) -> Void)?
     var recentChange: ((String) -> BuddyChange?)?
+    /// Tags each row with its service color. On only while more than one service is signed on.
+    var showsServiceBadges = false { didSet { if showsServiceBadges != oldValue { needsDisplay = true } } }
     private(set) var rows: [Row] = []
     private(set) var selectedID: String?
     private var collapsed: Set<Int> = [3]
@@ -85,7 +87,7 @@ final class BuddyTreeView: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         for (i, row) in rows.enumerated() {
             let rect = NSRect(x: 0, y: 3 + CGFloat(i) * Self.rowHeight, width: bounds.width, height: Self.rowHeight)
@@ -105,7 +107,7 @@ final class BuddyTreeView: FlippedView {
 
     private func drawToggle(open: Bool, at p: NSPoint) {
         let box = NSRect(x: p.x, y: p.y - 5, width: 10, height: 10)
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         box.fill()
         Theme.chromeShade.setStroke()
         NSBezierPath(rect: box.insetBy(dx: 0.5, dy: 0.5)).stroke()
@@ -127,6 +129,7 @@ final class BuddyTreeView: FlippedView {
         let nameWidth = min((chat.name as NSString).size(withAttributes: [.font: font]).width, rect.width - 90)
         drawText(chat.name, font: font, color: isSelected ? .white : Theme.text,
                  in: NSRect(x: 46, y: rect.minY, width: nameWidth + 2, height: rect.height))
+        drawBadge(chat.id, in: rect)
         drawText("(\(chat.onlineCount)/\(chat.members.count))", font: Theme.ui(10.5),
                  color: isSelected ? .white : Theme.mutedText,
                  in: NSRect(x: 50 + nameWidth, y: rect.minY, width: max(0, rect.width - nameWidth - 54), height: rect.height))
@@ -157,6 +160,8 @@ final class BuddyTreeView: FlippedView {
                 .draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
 
+        drawBadge(buddy.id, in: rect)
+
         let idle = buddy.presence == .idle || !buddy.isOnline
         let color: NSColor = isSelected ? .white : (idle ? Theme.rgb(130, 130, 130) : Theme.text)
         let font = change == .signedOn ? Theme.ui(12, bold: true) : Theme.ui(12)
@@ -169,6 +174,16 @@ final class BuddyTreeView: FlippedView {
             drawText(buddy.activity, font: Theme.ui(10.5), color: isSelected ? .white : Theme.mutedText,
                      in: NSRect(x: x, y: rect.minY, width: max(0, rect.width - x - 4), height: rect.height))
         }
+    }
+
+    /// A small square at the bottom right of the icon in the service's color.
+    private func drawBadge(_ id: String, in rect: NSRect) {
+        guard showsServiceBadges else { return }
+        let badge = NSRect(x: 36, y: rect.midY + 2, width: 6, height: 6)
+        Theme.paper.setFill()
+        NSBezierPath(roundedRect: badge.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2).fill()
+        ChatServiceKind(id: id).color.setFill()
+        NSBezierPath(roundedRect: badge, xRadius: 1.5, yRadius: 1.5).fill()
     }
 
     /// Away, Do Not Disturb and mobile buddies get an icon in place of their avatar, as AIM did for away messages.
@@ -235,7 +250,7 @@ final class BuddyTreeView: FlippedView {
     }
 }
 
-/// The Buddy List window: who is signed on to Discord, with Send IM and Info buttons.
+/// The Buddy List window: who is signed on to Discord, Slack and Messenger, with Send IM and Info buttons.
 final class BuddyListView: FlippedView {
     var onOpen: ((Buddy) -> Void)?
     var onOpenChat: ((GroupChat) -> Void)?
@@ -271,7 +286,7 @@ final class BuddyListView: FlippedView {
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = Theme.paper
 
         statusLabel.font = Theme.ui(11)
         statusLabel.textColor = Theme.mutedText
@@ -294,7 +309,7 @@ final class BuddyListView: FlippedView {
         tree.onMenu = { [weak self] buddy, event, view in
             let menu = NSMenu()
             menu.addItem(ActionItem("Send Instant Message") { self?.onOpen?(buddy) })
-            menu.addItem(ActionItem("Open in Discord") { self?.onInfo?(buddy) })
+            menu.addItem(ActionItem("Open in \(ChatServiceKind(id: buddy.id).name)") { self?.onInfo?(buddy) })
             menu.addItem(.separator())
             menu.addItem(ActionItem("Hide from Buddy List") { self?.onHide?(buddy) })
             if let hidden = self?.hiddenMenuItem() { menu.addItem(hidden) }
@@ -352,17 +367,29 @@ final class BuddyListView: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
     }
 
-    func reload(_ bridge: DiscordBridge, hidden: Set<String>) {
-        tree.recentChange = { [weak bridge] id in bridge?.recentChange(for: id) }
-        meLabel.stringValue = bridge.me?.name ?? "Buddy List"
-        meAvatar = bridge.me?.avatar
+    func reload(_ bridge: DiscordBridge, slack: SlackClient, messenger: MessengerBridge, hidden: Set<String>) {
+        tree.recentChange = { [weak bridge, weak slack, weak messenger] id in
+            switch ChatServiceKind(id: id) {
+            case .slack: return slack?.recentChange(for: id)
+            case .messenger: return messenger?.recentChange(for: id)
+            case .discord: return bridge?.recentChange(for: id)
+            }
+        }
+        meLabel.stringValue = bridge.me?.name ?? slack.me?.name ?? messenger.me?.name ?? "Buddy List"
+        meAvatar = bridge.me?.avatar ?? slack.me?.avatar ?? messenger.me?.avatar
         header.needsDisplay = true
+        let readyCount = [bridge.state == .ready, slack.state == .ready, messenger.state == .ready].filter { $0 }.count
+        let ready = readyCount > 0
         let message: String?
         switch bridge.state {
+        case _ where ready: message = nil
+        case _ where slack.state == .connecting: message = "Signing on to Slack..."
+        case _ where messenger.state == .connecting && bridge.state != .connecting:
+            message = "Signing on to Messenger...\nSign in from the Messenger window if Facebook asks."
         case .ready: message = nil
         case .closed: message = "Discord is signed off."
         case .connecting: message = "Signing on to Discord...\nSign in from the People Connection window if Discord asks."
@@ -370,15 +397,19 @@ final class BuddyListView: FlippedView {
         }
         statusLabel.stringValue = message ?? ""
         statusLabel.isHidden = message == nil
-        connect.isHidden = bridge.state == .ready
+        connect.isHidden = ready
         scroll.isHidden = message != nil
-        imButton.isEnabled = bridge.state == .ready
-        infoButton.isEnabled = bridge.state == .ready
-        lastBuddies = bridge.sortedBuddies.filter { !hidden.contains($0.id) }
-        lastRecent = RecentBuddies.pick(bridge.recentBuddies, hidden: hidden)
-        dmPartners = bridge.recentBuddies.filter { !hidden.contains($0.id) }
-        lastChats = bridge.groups
-        hiddenBuddies = hidden.map { ($0, bridge.buddy($0)?.name ?? $0) }
+        imButton.isEnabled = ready
+        infoButton.isEnabled = ready
+        tree.showsServiceBadges = readyCount > 1
+        lastBuddies = BuddySort.sorted(Array(bridge.buddies.values) + slack.buddies + Array(messenger.buddies.values))
+            .filter { !hidden.contains($0.id) }
+        lastRecent = RecentBuddies.pick(slack.recentBuddies + RecentBuddies.interleave(messenger.recentBuddies,
+                                                                                         bridge.recentBuddies),
+                                        hidden: hidden)
+        dmPartners = (bridge.recentBuddies + messenger.recentBuddies + slack.buddies).filter { !hidden.contains($0.id) }
+        lastChats = RecentBuddies.interleave(messenger.groups, bridge.groups) + slack.groups
+        hiddenBuddies = hidden.map { ($0, bridge.buddy($0)?.name ?? slack.buddy($0)?.name ?? messenger.buddy($0)?.name ?? $0) }
         tree.show(lastBuddies, recent: lastRecent, chats: lastChats)
         needsDisplay = true
         drawMeAvatar()

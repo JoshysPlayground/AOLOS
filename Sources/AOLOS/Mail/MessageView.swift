@@ -57,6 +57,7 @@ final class MessageView: FlippedView, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         webView = WKWebView(frame: .zero, configuration: config)
+        Appearance.track(webView)
         super.init(frame: frame)
         webView.navigationDelegate = self
 

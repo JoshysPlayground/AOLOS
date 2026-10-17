@@ -22,6 +22,8 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
 
     let webView: WKWebView
     let service: ServiceDef?
+    /// Data store profile. Links opened from this pane in new windows reuse it.
+    let profile: String
     weak var host: MDIWindow?
     weak var session: Session?
     private(set) var unread = 0
@@ -29,13 +31,14 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
     private var pendingCredential: PendingCredential?
     private var observations: [NSKeyValueObservation] = []
 
-    static func configuration(for service: ServiceDef?) -> WKWebViewConfiguration {
+    static func configuration(for service: ServiceDef?, profile: String) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = DataStores.store(for: service?.profile ?? "browser")
+        config.websiteDataStore = DataStores.store(for: profile)
         config.applicationNameForUserAgent = "Version/18.5 Safari/605.1.15"
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.isElementFullscreenEnabled = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        WebFeatures.set("PreferPageRenderingUpdatesNear60FPSEnabled", false, in: config.preferences)
 
         let controller = WKUserContentController()
         if service?.wantsHooks ?? true {
@@ -46,6 +49,12 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
             controller.addUserScript(WKUserScript(source: Scripts.discordBridge, injectionTime: .atDocumentEnd,
                                                   forMainFrameOnly: true))
         }
+        if service?.wantsHooks ?? true, let service, MessengerBridge.isMessengerService(service.url) {
+            controller.addUserScript(WKUserScript(source: Scripts.messengerBridge, injectionTime: .atDocumentEnd,
+                                                  forMainFrameOnly: true))
+        }
+        controller.addUserScript(WKUserScript(source: Scripts.browserInput, injectionTime: .atDocumentEnd,
+                                              forMainFrameOnly: false, in: Scripts.browserWorld))
         if service?.wantsAutofill ?? true {
             controller.addUserScript(WKUserScript(source: Scripts.autofill, injectionTime: .atDocumentEnd,
                                                   forMainFrameOnly: true, in: Scripts.autofillWorld))
@@ -56,11 +65,15 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
 
     /// Pass `configuration` only for popups. WebKit requires the popup to use the opener's configuration,
     /// whose content controller already has this pane's message handlers registered.
-    init(url: URL?, service: ServiceDef?, session: Session, configuration: WKWebViewConfiguration? = nil) {
+    init(url: URL?, service: ServiceDef?, session: Session, profile: String = "browser",
+         configuration: WKWebViewConfiguration? = nil) {
         let isPopup = configuration != nil
-        let config = configuration ?? Self.configuration(for: service)
+        let profile = service?.profile ?? profile
+        let config = configuration ?? Self.configuration(for: service, profile: profile)
         self.webView = WKWebView(frame: .zero, configuration: config)
+        Appearance.track(self.webView)
         self.service = service
+        self.profile = profile
         self.session = session
         super.init(frame: .zero)
 
@@ -68,6 +81,7 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
             let handler = WeakMessageHandler(self)
             config.userContentController.add(handler, name: "aolos")
             config.userContentController.add(handler, contentWorld: Scripts.autofillWorld, name: "aolosAuth")
+            config.userContentController.add(handler, contentWorld: Scripts.browserWorld, name: "aolosBrowser")
         }
 
         webView.navigationDelegate = self
@@ -90,7 +104,11 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
             },
         ]
 
-        if let url { webView.load(URLRequest(url: url)) }
+        if let url, url.isFileURL {
+            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else if let url {
+            webView.load(URLRequest(url: url))
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -99,6 +117,10 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
         super.layout()
         webView.frame = bounds
     }
+
+    /// Web windows open with a 1440x900 page area. The desktop shrinks them when it is smaller.
+    static let windowSize = NSSize(width: 1440 + MDIWindow.border * 2,
+                                   height: 900 + MDIWindow.titleHeight + MDIWindow.border * 2)
 
 
     static func unreadCount(in title: String) -> Int {
@@ -138,16 +160,27 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
         let origin = message.frameInfo.securityOrigin
 
+        if message.name == "aolosBrowser" {
+            receiveBrowserInput(type, body, from: message.webView)
+            return
+        }
+
         switch type {
         case "notification":
             // Direct messages already play imrcv from the Buddy List, so the Discord window stays quiet.
-            let quiet = DiscordBridge.isDiscordHost(origin.host) && session?.discord.state == .ready
+            let quiet = (DiscordBridge.isDiscordHost(origin.host) && session?.discord.state == .ready)
+                || (MessengerBridge.isMessengerHost(origin.host) && session?.messenger.state == .ready)
             session?.attention(from: self, sound: quiet ? nil : service?.notifySound ?? "notify")
 
         case let discordType where discordType.hasPrefix("discord."):
             guard message.frameInfo.isMainFrame, origin.protocol == "https",
                   DiscordBridge.isDiscordHost(origin.host) else { return }
             session?.discord.receive(discordType, body, from: self)
+
+        case let messengerType where messengerType.hasPrefix("messenger."):
+            guard message.frameInfo.isMainFrame, origin.protocol == "https",
+                  MessengerBridge.isMessengerHost(origin.host) else { return }
+            session?.messenger.receive(messengerType, body, from: self)
 
         case "credential":
             guard message.frameInfo.isMainFrame, origin.protocol == "https",
@@ -168,11 +201,40 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
+    /// Messages from `Scripts.browserInput`. A popup shares its opener's handlers, so act on the sending web view.
+    private func receiveBrowserInput(_ type: String, _ body: [String: Any], from source: WKWebView?) {
+        switch type {
+        case "navigate":
+            guard let source else { return }
+            if body["direction"] as? String == "forward" { source.goForward() } else { source.goBack() }
+        case "openLink":
+            guard let text = body["url"] as? String, let url = URL(string: text), Self.isWeb(url) else { return }
+            session?.openLink(url, from: self)
+        default:
+            break
+        }
+    }
+
+    static func isWeb(_ url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    /// Middle click or Command click on a link. WebKit reports the middle button as 2 or as the bit mask value 4.
+    static func wantsNewWindow(_ action: WKNavigationAction) -> Bool {
+        action.navigationType == .linkActivated
+            && (action.buttonNumber == 2 || action.buttonNumber == 4 || action.modifierFlags.contains(.command))
+    }
+
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() else {
             decisionHandler(.allow)
+            return
+        }
+        if Self.isWeb(url), Self.wantsNewWindow(navigationAction) {
+            decisionHandler(.cancel)
+            session?.openLink(url, from: self)
             return
         }
         switch scheme {
@@ -187,9 +249,39 @@ final class WebPane: FlippedView, WKNavigationDelegate, WKUIDelegate {
     }
 
 
+    /// Without this a failed page load leaves the window blank. Cancelled loads and policy interruptions
+    /// (a link opened elsewhere, a download) are expected and stay quiet.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let error = error as NSError
+        if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
+        if error.domain == "WebKitErrorDomain", error.code == 102 { return }
+        let url = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? webView.url
+        webView.loadHTMLString(Self.errorPage(error.localizedDescription, url: url), baseURL: nil)
+    }
+
+    static func errorPage(_ message: String, url: URL?) -> String {
+        func escape(_ s: String) -> String {
+            s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+        }
+        let address = url.map { escape($0.absoluteString) } ?? ""
+        return """
+        <!doctype html><meta charset="utf-8"><title>Page not available</title>
+        <body style="font: 13px -apple-system, sans-serif; margin: 40px; color: #222">
+        <h2 style="font-size: 16px">This page could not be opened.</h2>
+        <p>\(escape(message))</p><p style="color: #666; word-break: break-all">\(address)</p>
+        """
+    }
+
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        session?.openPopup(configuration: configuration, from: self, features: windowFeatures)
+        // A target=_blank link becomes a full browser window. Scripted popups such as sign-in windows keep their opener.
+        if navigationAction.navigationType == .linkActivated, windowFeatures.width == nil, windowFeatures.height == nil,
+           let url = navigationAction.request.url, Self.isWeb(url) {
+            session?.openLink(url, from: self)
+            return nil
+        }
+        return session?.openPopup(configuration: configuration, from: self, features: windowFeatures)
     }
 
     func webViewDidClose(_ webView: WKWebView) {

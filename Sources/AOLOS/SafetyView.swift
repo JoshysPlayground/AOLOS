@@ -46,7 +46,7 @@ extension Session {
             SafetyItem(label: "Touch ID Sign On", state: config.requireTouchID ? .on : .off),
             SafetyItem(label: "Mail Image Blocking", state: .on),
             SafetyItem(label: "Keychain Password Saving", state: .on),
-            SafetyItem(label: "Gmail Connection", state: mail.auth.isConnected ? .on : .unknown),
+            SafetyItem(label: "Gmail Connection", state: mail.isConnected ? .on : .unknown),
         ]
     }
 

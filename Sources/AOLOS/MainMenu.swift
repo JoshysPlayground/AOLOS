@@ -8,6 +8,7 @@ enum MainMenu {
 
         let app = NSMenu(title: "AOL-OS")
         app.addItem(ActionItem("About AOL-OS") { showAbout() })
+        app.addItem(ActionItem("Make AOL-OS Your Browser") { [weak session] in session?.makeDefaultBrowser() })
         app.addItem(.separator())
         app.addItem(NSMenuItem(title: "Hide AOL-OS", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         app.addItem(ActionItem("Quit AOL-OS", key: "q") { session.quit() })
@@ -17,7 +18,18 @@ enum MainMenu {
         file.addItem(ActionItem("New Browser Window", key: "n") { [weak session] in
             session?.openBrowser(URL(string: "https://www.google.com")!)
         })
+        file.addItem(ActionItem("New Claude Code Window", key: "t", modifiers: [.command, .shift]) { [weak session] in
+            session?.openClaudeCode()
+        })
+        file.addItem(ActionItem("Claude Code in Folder...", key: "o", modifiers: [.command, .shift]) { [weak session] in
+            session?.chooseClaudeCodeFolder()
+        })
+        file.addItem(ActionItem("New Terminal Window", key: "t", modifiers: [.command, .option]) { [weak session] in
+            session?.openTerminal()
+        })
+        file.addItem(ActionItem("Quick Launch...", key: "t") { [weak session] in session?.toggleQuickLaunch() })
         file.addItem(ActionItem("Keyword...", key: "k") { [weak session] in session?.promptKeyword() })
+        file.addItem(ActionItem("Open Location...", key: "l") { [weak session] in session?.focusAddressBar() })
         file.addItem(ActionItem("Close Window", key: "w") { [weak session] in session?.closeActiveWindow() })
         file.addItem(.separator())
         file.addItem(ActionItem("Sign Off", key: "q", modifiers: [.command, .shift]) { [weak session] in session?.signOff() })
@@ -44,6 +56,13 @@ enum MainMenu {
         view.addItem(ActionItem("Zoom Out", key: "-") { [weak session] in session?.zoom(by: -0.1) })
         view.addItem(ActionItem("Actual Size", key: "0") { [weak session] in session?.zoom(by: nil) })
         add(view, to: main)
+
+        let favorites = NSMenu(title: "Favorites")
+        favorites.addItem(ActionItem("Add to Favorites", key: "d") { [weak session] in session?.addFavorite() })
+        favorites.addItem(ActionItem("Manage Favorite Places...", key: "b", modifiers: [.command, .option]) { [weak session] in
+            session?.openFavorites()
+        })
+        add(favorites, to: main)
 
         let window = NSMenu(title: "Window")
         window.addItem(ActionItem("Minimize", key: "m") { [weak session] in
@@ -82,6 +101,11 @@ enum MainMenu {
                 m.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: ""))
                 m.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: ""))
             },
+            MenuRowItem(title: "Favorites") { [weak session] in
+                let menu = session?.favoritesMenu() ?? NSMenu()
+                menu.font = Theme.ui(12)
+                return menu
+            },
             item("Mail") { [weak session] m in
                 m.addItem(ActionItem("Read Mail") { session?.openService("mail") })
                 m.addItem(ActionItem("Write Mail") { session?.openService("write") })
@@ -91,15 +115,21 @@ enum MainMenu {
                 m.addItem(ActionItem("Chat Rooms (Discord)") { session?.openChatRooms() })
                 m.addItem(ActionItem("Chat (Discord)") { session?.openService("chat") })
                 m.addItem(ActionItem("Instant Message (Slack)") { session?.openService("im") })
+                m.addItem(ActionItem("Messenger (Facebook)") { session?.openService("messenger") })
             },
             item("Services") { [weak session] m in
                 m.addItem(ActionItem("AOL Radio") { session?.openRadio() })
                 m.addItem(ActionItem("YouTube Music") { session?.openService("ytmusic") })
                 m.addItem(ActionItem("Spotify Web Player") { session?.openService("spotify", web: true) })
                 m.addItem(ActionItem("Finance") { session?.openService("finance") })
+                m.addItem(.separator())
+                m.addItem(ActionItem("Claude Code") { session?.openClaudeCode() })
+                m.addItem(ActionItem("Claude Code in Folder...") { session?.chooseClaudeCodeFolder() })
+                m.addItem(ActionItem("Terminal") { session?.openTerminal() })
             },
             item("Settings") { [weak session] m in
                 m.addItem(ActionItem("Preferences...") { session?.openSettings() })
+                m.addItem(ActionItem("Make AOL-OS Your Browser") { session?.makeDefaultBrowser() })
                 m.addItem(ActionItem("Open Sounds Folder") {
                     SoundManager.writeSoundsReadme()
                     NSWorkspace.shared.open(AppPaths.sounds)

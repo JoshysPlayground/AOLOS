@@ -32,6 +32,8 @@ final class DiscordBridge {
     var onReactions: ((String, String, [MessageReaction]) -> Void)?
     var onVoiceChange: (() -> Void)?
     var onMention: ((ChatServer, ChatRoom, DirectMessage) -> Void)?
+    /// A message in a server channel that has no chat room window open.
+    var onRoomActivity: ((ChatServer, ChatRoom, DirectMessage) -> Void)?
 
     static let recentInterval: TimeInterval = 8
     static let callTimeout: TimeInterval = 15
@@ -106,12 +108,14 @@ final class DiscordBridge {
         case "discord.reactions":
             guard let channelId = body["channelId"] as? String, let messageId = body["messageId"] as? String else { return }
             onReactions?(channelId, messageId, MessageReaction.parse(body["reactions"]))
-        case "discord.mention":
+        case "discord.mention", "discord.roomActivity":
             guard let channelId = body["channelId"] as? String, let guildId = body["guildId"] as? String,
                   let json = body["message"] as? [String: Any], let message = DirectMessage(json: json),
                   let server = ChatServer(json: ["id": guildId, "name": body["serverName"] as? String ?? ""]),
-                  let room = ChatRoom(json: ["id": channelId, "name": body["roomName"] as? String ?? channelId]) else { return }
-            onMention?(server, room, message)
+                  let room = ChatRoom(json: ["id": channelId, "name": body["roomName"] as? String ?? channelId,
+                                             "category": body["categoryName"] as? String ?? "",
+                                             "categoryId": body["categoryId"] as? String ?? ""]) else { return }
+            if type == "discord.mention" { onMention?(server, room, message) } else { onRoomActivity?(server, room, message) }
         case "discord.voice":
             onVoiceChange?()
         case "discord.signedOff":
@@ -223,6 +227,26 @@ final class DiscordBridge {
         call("return window.__aolosDiscord.rooms(guildId);", ["guildId": serverId]) { result in
             completion(result.map { ($0 as? [[String: Any]] ?? []).compactMap(ChatRoom.init(json:)) })
         }
+    }
+
+    /// Every text and voice room across all servers, with each room's server name.
+    func allRooms(completion: @escaping @MainActor (Result<[QuickRoom], Error>) -> Void) {
+        call("return window.__aolosDiscord.allRooms();", [:]) { result in
+            completion(result.map { ($0 as? [[String: Any]] ?? []).compactMap(QuickRoom.init(json:)) })
+        }
+    }
+
+    /// People the Discord client has loaded whose name matches, friends or not.
+    func searchPeople(_ query: String, limit: Int = 8, completion: @escaping @MainActor ([Buddy]) -> Void) {
+        call("return window.__aolosDiscord.searchUsers(q, limit);", ["q": query, "limit": limit]) { result in
+            completion((try? result.get()).flatMap { $0 as? [[String: Any]] }?.compactMap(Buddy.init(json:)) ?? [])
+        }
+    }
+
+    /// Keeps a non-friend picked in Quick Launch resolvable, so their IM window keeps its name and presence.
+    func remember(_ buddy: Buddy) {
+        guard buddies[buddy.id] == nil else { return }
+        others[buddy.id] = buddy
     }
 
     /// Live messages from a server channel only arrive while it is watched.

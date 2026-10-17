@@ -8,9 +8,13 @@ let infoPlist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appe
 let package = Package(
     name: "AOL-OS",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", .upToNextMinor(from: "1.20.0")),
+    ],
     targets: [
         .executableTarget(
             name: "AOLOS",
+            dependencies: [.product(name: "SwiftTerm", package: "SwiftTerm")],
             path: "Sources/AOLOS",
             linkerSettings: [
                 .linkedFramework("AppKit"),

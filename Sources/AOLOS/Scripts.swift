@@ -3,6 +3,33 @@ import WebKit
 enum Scripts {
     /// Autofill runs in its own content world so page scripts cannot call into it or read its globals.
     @MainActor static let autofillWorld = WKContentWorld.world(name: "AOLOSAutofill")
+    /// Navigation input runs in its own world. It only reads key and click events.
+    @MainActor static let browserWorld = WKContentWorld.world(name: "AOLOSBrowser")
+
+    /// Cmd or Option with Left and Right go back and forward outside text fields. Middle click opens a link in a new window.
+    /// Talks to native code over `aolosBrowser`. Both handlers skip events the page already handled.
+    static let browserInput = #"""
+    (() => {
+      const post = (m) => { try { webkit.messageHandlers.aolosBrowser.postMessage(m); } catch (e) {} };
+      const editable = (el) => !!el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName || ''));
+
+      window.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented || e.ctrlKey || e.shiftKey || e.metaKey === e.altKey) return;
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (editable(e.target) || editable(document.activeElement)) return;
+        e.preventDefault();
+        post({ type: 'navigate', direction: e.key === 'ArrowLeft' ? 'back' : 'forward' });
+      });
+
+      document.addEventListener('auxclick', (e) => {
+        if (e.button !== 1 || e.defaultPrevented) return;
+        const link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+        if (!link || !/^https?:/i.test(link.href)) return;
+        e.preventDefault();
+        post({ type: 'openLink', url: link.href });
+      });
+    })();
+    """#
 
     /// Replaces the page's Notification API so web notifications become AOL-OS sounds.
     /// Runs in the page world because it must shadow the page's own `Notification`.
@@ -112,14 +139,22 @@ enum Scripts {
         setValue(pw, p);
       };
 
+      // The visibility test forces layout, so DOM changes are batched and the cheap selector test runs first.
       let asked = false;
+      let queued = false;
       const check = () => {
-        if (!asked && passwordField()) {
-          asked = true;
-          post({ type: 'needCredentials' });
-        }
+        queued = false;
+        if (asked || !document.querySelector('input[type=password]') || !passwordField()) return;
+        asked = true;
+        observer.disconnect();
+        post({ type: 'needCredentials' });
       };
-      new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+      const observer = new MutationObserver(() => {
+        if (asked || queued) return;
+        queued = true;
+        setTimeout(check, 300);
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
       check();
     })();
     """#

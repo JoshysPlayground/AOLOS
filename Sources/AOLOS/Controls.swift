@@ -172,6 +172,12 @@ final class ToolbarButton: PressableView {
 
     private var isLive: Bool { isEnabled && available }
 
+    /// Wide enough for the bold label, never narrower than `minWidth`.
+    func preferredWidth(minWidth: CGFloat) -> CGFloat {
+        let text = (title as NSString).size(withAttributes: [.font: Theme.ui(10.5, bold: true)]).width
+        return max(minWidth, ceil(text) + 12)
+    }
+
     private func loadImages() {
         activeImage = AppPaths.brandingImage("Toolbar/\(name)-active.png") ?? Icons.symbol(symbol, size: 22, colors: colors)
         inactiveImage = AppPaths.brandingImage("Toolbar/\(name)-inactive.png")

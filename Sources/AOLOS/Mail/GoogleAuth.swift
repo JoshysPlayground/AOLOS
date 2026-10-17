@@ -77,46 +77,110 @@ final class LoopbackServer: @unchecked Sendable {
     }
 }
 
-/// Google OAuth for IMAP and SMTP. The client ID, client secret and refresh token live in the login keychain.
-@MainActor
-final class GoogleAuth {
-    static let scopes = "https://mail.google.com/ openid email"
+/// Keychain keys for the Google accounts. Pure so the migration can be tested without a keychain.
+enum GoogleAccountKeys {
+    static let clientID = "google.clientID"
+    static let clientSecret = "google.clientSecret"
+    static let accounts = "google.accounts"
+    /// The single-account keys from before multiple accounts.
+    static let legacyRefreshToken = "google.refreshToken"
+    static let legacyEmail = "google.email"
 
-    private enum Key {
-        static let clientID = "google.clientID"
-        static let clientSecret = "google.clientSecret"
-        static let refreshToken = "google.refreshToken"
-        static let email = "google.email"
+    static func refreshToken(_ email: String) -> String { "google.refreshToken.\(email.lowercased())" }
+
+    static func decodeList(_ value: String?) -> [String] {
+        guard let data = value?.data(using: .utf8),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return list
     }
 
-    private var accessToken: String?
-    private var expiry = Date.distantPast
-    private var server: LoopbackServer?
+    static func encodeList(_ list: [String]) -> String {
+        String(decoding: (try? JSONEncoder().encode(list)) ?? Data("[]".utf8), as: UTF8.self)
+    }
+
+    /// Returns the changes that move a single-account store to the account list, or nil when nothing needs moving.
+    /// A nil value in the result removes that key.
+    static func migration(_ store: [String: String]) -> [String: String?]? {
+        guard store[accounts] == nil, let email = store[legacyEmail] else { return nil }
+        var changes: [String: String?] = [legacyEmail: nil, legacyRefreshToken: nil]
+        if let token = store[legacyRefreshToken] {
+            changes[refreshToken(email)] = token
+            changes[accounts] = encodeList([email])
+        }
+        return changes
+    }
+}
+
+/// The shared Google OAuth client and the list of signed-in Gmail accounts. The first account is the primary one.
+@MainActor
+enum GoogleAccounts {
+    static let scopes = "https://mail.google.com/ openid email"
+    private static var server: LoopbackServer?
+    private static var migrated = false
 
     /// A client saved in Settings wins over the built-in one.
-    var overrideClientID: String? { Keychain.secret(Key.clientID) }
-    var hasOverrideSecret: Bool { Keychain.secret(Key.clientSecret) != nil }
-    var clientID: String? { overrideClientID ?? (GoogleClient.isConfigured ? GoogleClient.id : nil) }
-    var clientSecret: String? {
-        overrideClientID != nil ? Keychain.secret(Key.clientSecret) : (GoogleClient.isConfigured ? GoogleClient.secret : nil)
+    static var overrideClientID: String? { Keychain.secret(GoogleAccountKeys.clientID) }
+    static var hasOverrideSecret: Bool { Keychain.secret(GoogleAccountKeys.clientSecret) != nil }
+    static var clientID: String? { overrideClientID ?? (GoogleClient.isConfigured ? GoogleClient.id : nil) }
+    static var clientSecret: String? {
+        overrideClientID != nil ? Keychain.secret(GoogleAccountKeys.clientSecret) : (GoogleClient.isConfigured ? GoogleClient.secret : nil)
     }
-    var hasClient: Bool { clientID != nil && clientSecret != nil }
-    var email: String? { Keychain.secret(Key.email) }
-    var isConnected: Bool { email != nil && Keychain.secret(Key.refreshToken) != nil }
+    static var hasClient: Bool { clientID != nil && clientSecret != nil }
 
     /// An empty ID clears the override and returns to the built-in client.
-    func setClient(id: String, secret: String?) {
+    static func setClient(id: String, secret: String?) {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        Keychain.setSecret(Key.clientID, trimmed.isEmpty ? nil : trimmed)
+        Keychain.setSecret(GoogleAccountKeys.clientID, trimmed.isEmpty ? nil : trimmed)
         if trimmed.isEmpty {
-            Keychain.setSecret(Key.clientSecret, nil)
+            Keychain.setSecret(GoogleAccountKeys.clientSecret, nil)
         } else if let secret, !secret.isEmpty {
-            Keychain.setSecret(Key.clientSecret, secret.trimmingCharacters(in: .whitespacesAndNewlines))
+            Keychain.setSecret(GoogleAccountKeys.clientSecret, secret.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
-    /// Runs the browser sign in with PKCE and returns the signed-in address.
-    func connect() async throws -> String {
+    /// Signed-in addresses in order, primary first.
+    static var emails: [String] {
+        migrateIfNeeded()
+        return GoogleAccountKeys.decodeList(Keychain.secret(GoogleAccountKeys.accounts))
+    }
+
+    private static func setEmails(_ list: [String]) {
+        Keychain.setSecret(GoogleAccountKeys.accounts, list.isEmpty ? nil : GoogleAccountKeys.encodeList(list))
+    }
+
+    private static func migrateIfNeeded() {
+        guard !migrated else { return }
+        migrated = true
+        var store: [String: String] = [:]
+        for key in [GoogleAccountKeys.accounts, GoogleAccountKeys.legacyEmail, GoogleAccountKeys.legacyRefreshToken] {
+            store[key] = Keychain.secret(key)
+        }
+        guard let changes = GoogleAccountKeys.migration(store) else { return }
+        // Write the new keys before removing the old ones.
+        for (key, value) in changes where value != nil { Keychain.setSecret(key, value) }
+        for (key, value) in changes where value == nil { Keychain.setSecret(key, nil) }
+    }
+
+    static func makePrimary(_ email: String) {
+        var list = emails
+        guard let i = list.firstIndex(where: { $0.caseInsensitiveCompare(email) == .orderedSame }), i > 0 else { return }
+        list.insert(list.remove(at: i), at: 0)
+        setEmails(list)
+    }
+
+    /// Revokes the account's refresh token and forgets it.
+    static func remove(_ email: String) {
+        let key = GoogleAccountKeys.refreshToken(email)
+        if let refresh = Keychain.secret(key) {
+            Task { _ = try? await OAuthHTTP.postForm("https://oauth2.googleapis.com/revoke", ["token": refresh]) }
+        }
+        Keychain.setSecret(key, nil)
+        setEmails(emails.filter { $0.caseInsensitiveCompare(email) != .orderedSame })
+    }
+
+    /// Runs the browser sign in with PKCE, saves the account, and returns its address.
+    /// Google shows its account chooser, so the same flow adds a new account or reconnects one.
+    static func signIn(hint: String? = nil) async throws -> String {
         guard let clientID, let secret = clientSecret else {
             throw MailError.auth("This build has no Google OAuth client. Add one in Settings.")
         }
@@ -130,22 +194,23 @@ final class GoogleAuth {
 
         let port = try await server.start()
         let redirect = "http://127.0.0.1:\(port)"
-        let verifier = Self.randomURLSafe(32)
-        let state = Self.randomURLSafe(16)
+        let verifier = GoogleAuth.randomURLSafe(32)
+        let state = GoogleAuth.randomURLSafe(16)
 
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "redirect_uri", value: redirect),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: Self.scopes),
-            URLQueryItem(name: "code_challenge", value: Self.challenge(for: verifier)),
+            URLQueryItem(name: "scope", value: scopes),
+            URLQueryItem(name: "code_challenge", value: GoogleAuth.challenge(for: verifier)),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "access_type", value: "offline"),
-            URLQueryItem(name: "prompt", value: "consent"),
+            URLQueryItem(name: "prompt", value: "select_account consent"),
         ]
-        NSWorkspace.shared.open(components.url!)
+        if let hint { components.queryItems?.append(URLQueryItem(name: "login_hint", value: hint)) }
+        DefaultBrowser.openElsewhere(components.url!)
 
         let params = try await server.waitForCallback()
         NSApp.activate()
@@ -164,19 +229,45 @@ final class GoogleAuth {
         ])
         guard let refresh = json["refresh_token"] as? String,
               let idToken = json["id_token"] as? String,
-              let email = Self.email(fromIDToken: idToken) else {
+              let email = GoogleAuth.email(fromIDToken: idToken) else {
             throw MailError.auth("Google did not return a refresh token.")
         }
-        store(json)
-        Keychain.setSecret(Key.refreshToken, refresh)
-        Keychain.setSecret(Key.email, email)
+        Keychain.setSecret(GoogleAccountKeys.refreshToken(email), refresh)
+        var list = emails
+        if let i = list.firstIndex(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) {
+            list[i] = email
+        } else {
+            list.append(email)
+        }
+        setEmails(list)
         return email
+    }
+}
+
+/// Access tokens for one Gmail account. The refresh token lives in the login keychain.
+@MainActor
+final class GoogleAuth {
+    let email: String
+    private var accessToken: String?
+    private var expiry = Date.distantPast
+
+    init(email: String) {
+        self.email = email
+    }
+
+    var isConnected: Bool { Keychain.secret(GoogleAccountKeys.refreshToken(email)) != nil }
+
+    /// Drops the cached access token, for example after the account signs in again.
+    func reset() {
+        accessToken = nil
+        expiry = .distantPast
     }
 
     func token() async throws -> String {
         if let accessToken, expiry.timeIntervalSinceNow > 60 { return accessToken }
-        guard let clientID, let secret = clientSecret,
-              let refresh = Keychain.secret(Key.refreshToken) else { throw MailError.notConnected }
+        let key = GoogleAccountKeys.refreshToken(email)
+        guard let clientID = GoogleAccounts.clientID, let secret = GoogleAccounts.clientSecret,
+              let refresh = Keychain.secret(key) else { throw MailError.notConnected }
         do {
             let json = try await OAuthHTTP.postForm("https://oauth2.googleapis.com/token", [
                 "client_id": clientID,
@@ -184,28 +275,14 @@ final class GoogleAuth {
                 "refresh_token": refresh,
                 "grant_type": "refresh_token",
             ])
-            store(json)
+            accessToken = json["access_token"] as? String
+            expiry = Date().addingTimeInterval((json["expires_in"] as? Double) ?? 3600)
         } catch MailError.auth(let reason) where reason.contains("invalid_grant") {
-            Keychain.setSecret(Key.refreshToken, nil)
-            throw MailError.auth("Your Gmail sign in expired. Connect Gmail again in Settings.")
+            Keychain.setSecret(key, nil)
+            throw MailError.auth("The sign in for \(email) expired. Reconnect it in Settings.")
         }
         guard let accessToken else { throw MailError.notConnected }
         return accessToken
-    }
-
-    func disconnect() {
-        if let refresh = Keychain.secret(Key.refreshToken) {
-            Task { _ = try? await OAuthHTTP.postForm("https://oauth2.googleapis.com/revoke", ["token": refresh]) }
-        }
-        Keychain.setSecret(Key.refreshToken, nil)
-        Keychain.setSecret(Key.email, nil)
-        accessToken = nil
-        expiry = .distantPast
-    }
-
-    private func store(_ json: [String: Any]) {
-        accessToken = json["access_token"] as? String
-        expiry = Date().addingTimeInterval((json["expires_in"] as? Double) ?? 3600)
     }
 
     nonisolated static func randomURLSafe(_ count: Int) -> String {

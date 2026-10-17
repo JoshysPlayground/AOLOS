@@ -65,7 +65,7 @@ final class SpotifyAuth {
             URLQueryItem(name: "scope", value: Self.scopes),
             URLQueryItem(name: "state", value: state),
         ]
-        NSWorkspace.shared.open(components.url!)
+        DefaultBrowser.openElsewhere(components.url!)
 
         let params = try await server.waitForCallback()
         NSApp.activate()

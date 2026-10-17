@@ -18,6 +18,8 @@ final class PickList: FlippedView {
     private(set) var selectedID: String?
     var onSelect: ((Item) -> Void)?
     var onOpen: ((Item) -> Void)?
+    /// Right click on a selectable row or a header. A selectable row is selected first.
+    var onMenu: ((Item, NSEvent) -> Void)?
     static let rowHeight: CGFloat = 20
 
     override var acceptsFirstResponder: Bool { true }
@@ -40,7 +42,7 @@ final class PickList: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.setFill()
+        Theme.paper.setFill()
         bounds.fill()
         for (i, item) in items.enumerated() {
             let rect = NSRect(x: 0, y: 2 + CGFloat(i) * Self.rowHeight, width: bounds.width, height: Self.rowHeight)
@@ -86,6 +88,22 @@ final class PickList: FlippedView {
         if event.clickCount == 2 { onOpen?(items[i]) }
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let i = Int((p.y - 2) / Self.rowHeight)
+        guard p.y >= 2, items.indices.contains(i), !items[i].isNote else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        window?.makeFirstResponder(self)
+        if !items[i].isHeader, selectedID != items[i].id {
+            selectedID = items[i].id
+            needsDisplay = true
+            onSelect?(items[i])
+        }
+        onMenu?(items[i], event)
+    }
+
     override func keyDown(with event: NSEvent) {
         let rows = items.filter { !$0.isHeader && !$0.isNote }
         let current = rows.firstIndex { $0.id == selectedID }
@@ -110,6 +128,20 @@ final class ChatRoomsView: FlippedView {
     var onEnter: ((ChatServer, ChatRoom) -> Void)?
     var onRefresh: (() -> Void)?
     var onLeaveVoice: (() -> Void)?
+    var onToggleFavorite: ((ChatServer, ChatRoom) -> Void)?
+    var onToggleMute: ((String) -> Void)?
+    /// Muted server, category and room IDs. Muted rows show a muted speaker.
+    var mutedIDs: [String] = [] {
+        didSet {
+            guard mutedIDs != oldValue else { return }
+            showServers(servers)
+            if !rooms.isEmpty { showRooms(rooms) }
+        }
+    }
+    /// Favorite room IDs in pin order. They are listed first, under a Favorites header.
+    var favoriteRoomIDs: [String] = [] {
+        didSet { if favoriteRoomIDs != oldValue, !rooms.isEmpty { showRooms(rooms) } }
+    }
 
     private let header = GradientView(colors: [Theme.rgb(74, 138, 222), Theme.rgb(30, 88, 184)], bottomLine: Theme.rgb(18, 58, 140))
     private let title = NSTextField(labelWithString: "Find a Chat")
@@ -154,6 +186,41 @@ final class ChatRoomsView: FlippedView {
             self?.enter.title = voice ? "Join Voice" : "Enter Chat"
             self?.buttons.needsLayout = true
         }
+        serverList.onMenu = { [weak self] item, event in
+            guard let self else { return }
+            let menu = NSMenu()
+            menu.addItem(self.muteItem(item.id, "Server"))
+            NSMenu.popUpContextMenu(menu, with: event, for: self.serverList)
+        }
+        roomList.onMenu = { [weak self] item, event in
+            guard let self else { return }
+            if item.isHeader {
+                let id = String(item.id.dropFirst(Self.categoryPrefix.count))
+                guard item.id.hasPrefix(Self.categoryPrefix), !id.isEmpty else { return }
+                let menu = NSMenu()
+                menu.addItem(self.muteItem(id, "Category"))
+                NSMenu.popUpContextMenu(menu, with: event, for: self.roomList)
+                return
+            }
+            guard let room = self.rooms.first(where: { $0.id == item.id }) else { return }
+            let menu = NSMenu()
+            menu.addItem(ActionItem(room.voice ? "Join Voice" : "Enter Chat") { [weak self] in self?.enterSelected() })
+            menu.addItem(.separator())
+            let isFavorite = self.favoriteRoomIDs.contains(room.id)
+            menu.addItem(ActionItem(isFavorite ? "Remove from Favorites" : "Add to Favorites") { [weak self] in
+                guard let self, let server = self.currentServer else { return }
+                self.onToggleFavorite?(server, room)
+            })
+            if !room.voice {
+                menu.addItem(self.muteItem(room.id, "Room"))
+                if !self.mutedIDs.contains(room.id), self.isMuted(room) {
+                    let note = NSMenuItem(title: "Muted by its category or server", action: nil, keyEquivalent: "")
+                    note.isEnabled = false
+                    menu.addItem(note)
+                }
+            }
+            NSMenu.popUpContextMenu(menu, with: event, for: self.roomList)
+        }
         leave.action = { [weak self] in self?.onLeaveVoice?() }
         enter.action = { [weak self] in self?.enterSelected() }
         refresh.action = { [weak self] in self?.onRefresh?() }
@@ -185,10 +252,22 @@ final class ChatRoomsView: FlippedView {
         bounds.fill()
     }
 
+    private static let categoryPrefix = "cat-"
+    private static let mutedMark = "  \u{1F507}"
+
+    private func muteItem(_ id: String, _ kind: String) -> NSMenuItem {
+        ActionItem(mutedIDs.contains(id) ? "Unmute \(kind)" : "Mute \(kind)") { [weak self] in self?.onToggleMute?(id) }
+    }
+
+    private func isMuted(_ room: ChatRoom) -> Bool {
+        guard let server = currentServer else { return mutedIDs.contains(room.id) }
+        return ChatMute.isMuted(room, in: server, muted: mutedIDs)
+    }
+
     func showServers(_ servers: [ChatServer]) {
         self.servers = servers
         serverList.items = servers.map {
-            PickList.Item(id: $0.id, title: $0.name, icon: Icons.symbol("person.3.fill", size: 11, colors: [Theme.aolBlue]),
+            PickList.Item(id: $0.id, title: $0.name + (mutedIDs.contains($0.id) ? Self.mutedMark : ""), icon: Icons.symbol("person.3.fill", size: 11, colors: [Theme.aolBlue]),
                           iconURL: $0.iconURL)
         }
         if let current = currentServer, servers.contains(where: { $0.id == current.id }) {
@@ -207,26 +286,40 @@ final class ChatRoomsView: FlippedView {
             return
         }
         var items: [PickList.Item] = []
+        let favorites = favoriteRoomIDs.compactMap { id in rooms.first { $0.id == id } }
+        if !favorites.isEmpty {
+            items.append(PickList.Item(id: "_favorites", title: "\u{2665} Favorites", isHeader: true))
+            favorites.forEach { appendRoom($0, to: &items) }
+        }
         var category: String?
-        for room in rooms {
+        for room in rooms where !favoriteRoomIDs.contains(room.id) {
             if room.category != category {
                 category = room.category
-                if !room.category.isEmpty { items.append(PickList.Item(id: "cat-\(room.id)", title: room.category, isHeader: true)) }
-            }
-            if room.voice {
-                let title = room.joined ? "\u{1F50A} \(room.name) (connected)" : "\u{1F50A} \(room.name)"
-                items.append(PickList.Item(id: room.id, title: title, bold: room.joined))
-                for person in room.people {
-                    items.append(PickList.Item(id: "\(room.id)-\(person)", title: person, isNote: true))
+                if !room.category.isEmpty {
+                    let muted = !room.categoryID.isEmpty && mutedIDs.contains(room.categoryID)
+                    items.append(PickList.Item(id: Self.categoryPrefix + (room.categoryID.isEmpty ? "" : room.categoryID),
+                                               title: room.category + (muted ? Self.mutedMark : ""), isHeader: true))
                 }
-            } else {
-                items.append(PickList.Item(id: room.id, title: "# \(room.name)", bold: room.unread))
             }
+            appendRoom(room, to: &items)
         }
         if items.isEmpty { items = [PickList.Item(id: "_", title: "No rooms you can read", isHeader: true)] }
         let selected = roomList.selectedID
         roomList.items = items
         roomList.select(selected)
+    }
+
+    private func appendRoom(_ room: ChatRoom, to items: inout [PickList.Item]) {
+        if room.voice {
+            let title = room.joined ? "\u{1F50A} \(room.name) (connected)" : "\u{1F50A} \(room.name)"
+            items.append(PickList.Item(id: room.id, title: title, bold: room.joined))
+            for person in room.people {
+                items.append(PickList.Item(id: "\(room.id)-\(person)", title: person, isNote: true))
+            }
+        } else {
+            items.append(PickList.Item(id: room.id, title: "# \(room.name)" + (isMuted(room) ? Self.mutedMark : ""),
+                                       bold: room.unread))
+        }
     }
 
     /// Reloads the rooms of the selected server, keeping the selection. Voice channel members change often.

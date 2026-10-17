@@ -34,6 +34,7 @@ final class MDITitleBar: FlippedView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        MDIWindow.topRoundedPath(bounds, radius: owner?.isMaximized == false ? 4 : 0).addClip()
         let colors: [NSColor]
         switch state {
         case .active: colors = Theme.titleActive
@@ -101,10 +102,13 @@ final class MDIWindow: FlippedView {
     var onClose: (() -> Void)?
     /// Closing minimizes instead. Sign off still closes it. The Buddy List relies on the Discord window staying loaded.
     var minimizesOnClose = false
+    /// Minimizes into the chat column on the left edge instead of the bottom row.
+    var minimizesToSide = false
     var minSize = NSSize(width: 320, height: 200)
     var zIndex = 0
     private(set) var isMaximized = false
-    private var restoreFrame = NSRect.zero
+    /// The frame a maximized window goes back to.
+    private(set) var restoreFrame = NSRect.zero
 
     private var resizeEdges: Edges = []
     private var resizeStart = NSPoint.zero
@@ -151,10 +155,7 @@ final class MDIWindow: FlippedView {
         titleBar.minButton.action = { [weak self] in self.map { $0.desktop?.minimize($0) } }
         titleBar.maxButton.action = { [weak self] in self?.toggleMaximize() }
         titleBar.closeButton.action = { [weak self] in self.map { $0.desktop?.close($0) } }
-        wantsLayer = true
-        layer?.masksToBounds = true
-        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        updateCorners()
+        clipsToBounds = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -176,7 +177,21 @@ final class MDIWindow: FlippedView {
 
     override func draw(_ dirtyRect: NSRect) {
         (isActive ? Theme.frameActive : Theme.frameInactive).setFill()
-        bounds.fill()
+        Self.topRoundedPath(bounds, radius: isMaximized ? 0 : 8).fill()
+    }
+
+    /// A rect with rounded top corners. Views here are flipped, so min Y is the top.
+    static func topRoundedPath(_ r: NSRect, radius: CGFloat) -> NSBezierPath {
+        guard radius > 0 else { return NSBezierPath(rect: r) }
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: r.minX, y: r.maxY))
+        path.line(to: NSPoint(x: r.minX, y: r.minY + radius))
+        path.appendArc(from: NSPoint(x: r.minX, y: r.minY), to: NSPoint(x: r.minX + radius, y: r.minY), radius: radius)
+        path.line(to: NSPoint(x: r.maxX - radius, y: r.minY))
+        path.appendArc(from: NSPoint(x: r.maxX, y: r.minY), to: NSPoint(x: r.maxX, y: r.minY + radius), radius: radius)
+        path.line(to: NSPoint(x: r.maxX, y: r.maxY))
+        path.close()
+        return path
     }
 
     private func updateTitleState() {
@@ -185,9 +200,11 @@ final class MDIWindow: FlippedView {
 
     func activate() { desktop?.activate(self) }
 
-    /// Luna rounds only the top corners, and a maximized window has none. The layer is flipped with the view, so min Y is the top.
+    /// Luna rounds only the top corners, and a maximized window has none. The corners are drawn rather than masked
+    /// with a layer, because a rounded layer mask can force offscreen rendering of the web view.
     private func updateCorners() {
-        layer?.cornerRadius = isMaximized ? 0 : 8
+        needsDisplay = true
+        titleBar.needsDisplay = true
     }
 
     func toggleMaximize() {

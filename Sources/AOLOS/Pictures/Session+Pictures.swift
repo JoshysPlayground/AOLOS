@@ -42,7 +42,7 @@ extension Session {
 
     /// Opens Write Mail with the pictures attached once their files are ready.
     func sendPicturesInMail(_ assets: [PHAsset]) {
-        guard mail.auth.isConnected else {
+        guard mail.isConnected else {
             openMailbox()
             return
         }

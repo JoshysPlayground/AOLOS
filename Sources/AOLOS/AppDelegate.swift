@@ -9,7 +9,10 @@ final class KioskWindow: NSWindow {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var session: Session!
+    private var windowTracker: AppWindowTracker?
     private let windowed = CommandLine.arguments.contains("--windowed")
+    /// Links macOS hands over before the session exists.
+    private var launchURLs: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .aqua)
@@ -29,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             window.minSize = NSSize(width: 900, height: 600)
             window.center()
+            windowTracker = AppWindowTracker(window: window)
+            windowTracker?.restoreFrame()
         } else {
             let frame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             window = KioskWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -45,13 +50,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if windowed { wireWindowControls(shell.titleBar) }
 
         window.makeKeyAndOrderFront(nil)
+        windowTracker?.restoreState()
         NSApp.activate()
         applyKioskOptions()
         session.start()
+        session.openExternal(launchURLs)
+        launchURLs = []
+    }
+
+    /// Links and web pages opened from other apps when AOL-OS is the default browser.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let session else { launchURLs += urls; return }
+        session.openExternal(urls)
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         applyKioskOptions()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        windowTracker?.update()
+        session?.saveWindowLayout()
+        session?.stopTerminals()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

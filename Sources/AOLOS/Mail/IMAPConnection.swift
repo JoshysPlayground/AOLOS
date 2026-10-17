@@ -8,6 +8,8 @@ struct MailSummary: Hashable {
     let from: String
     let to: String
     let subject: String
+    /// The Gmail address this message belongs to. MailService fills it in.
+    var account = ""
 }
 
 struct MailFolderInfo: Equatable {
@@ -155,9 +157,18 @@ actor IMAPConnection {
     }
 
     func endIdle() async {
-        guard idleTag != nil, !doneSent else { return }
+        guard let tag = idleTag, !doneSent else { return }
         doneSent = true
         try? await stream.write("DONE\r\n")
+        // A live server answers DONE at once. No answer means the socket is dead, so close it to wake the reader.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+            await self?.closeIfStillIdle(tag)
+        }
+    }
+
+    private func closeIfStillIdle(_ tag: String) async {
+        if idleTag == tag { await stream.close() }
     }
 
     @discardableResult

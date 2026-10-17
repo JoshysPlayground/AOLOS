@@ -25,7 +25,7 @@ extension Session {
 
     func updateWelcomeMail() {
         guard let pane = welcomePane else { return }
-        if !mail.auth.isConnected {
+        if !mail.isConnected {
             pane.setMailState("Connect Gmail in Settings to get mail here", hasMail: false)
         } else if !mail.hasLoaded {
             pane.setMailState(mail.isRunning ? "Checking mail..." : "Open your Mailbox to check mail", hasMail: false)
@@ -38,7 +38,7 @@ extension Session {
 
     func openMailbox(minimized: Bool = false) {
         guard signedOn else { return }
-        if mail.auth.isConnected { mail.start() }
+        if mail.isConnected { mail.start() }
         if let w = mailboxWindow, w.superview != nil {
             if !minimized { desktop.activate(w) }
             return
@@ -61,11 +61,12 @@ extension Session {
 
     private func mailboxAction(_ action: MailboxView.Action, _ summaries: [MailSummary]) {
         let summary = summaries.first
+        let account = mailboxView?.account
         switch action {
         case .read:
             summaries.prefix(5).forEach(openMessage)
         case .write:
-            openCompose()
+            openCompose(from: account)
         case .reply, .forward:
             guard let summary else { return }
             let mode: ReplyMode = action == .reply ? .reply : .forward
@@ -91,20 +92,25 @@ extension Session {
                 do { try await self?.mail.reportSpam(summaries) } catch { self?.showMailError(error) }
             }
         case .refresh:
-            mail.start()
             Task { [weak self] in
-                do {
-                    try await self?.mail.refresh()
-                    try await self?.mail.refreshSent()
-                } catch {
-                    self?.showMailError(error)
-                }
+                do { try await self?.mail.refresh(account: account) } catch { self?.showMailError(error) }
             }
         case .connect:
             connectGmail()
         case .webGmail:
-            openService("mail", web: true)
+            openGmailWeb(account: account)
         }
+    }
+
+    /// Gmail on the web in the `google` profile. `authuser` picks the account when that profile is signed in to several.
+    func openGmailWeb(account: String?) {
+        guard let account, mail.accounts.count > 1 else {
+            openService("mail", web: true)
+            return
+        }
+        var c = URLComponents(string: "https://mail.google.com/mail/")!
+        c.queryItems = [URLQueryItem(name: "authuser", value: account)]
+        if let url = c.url { openBrowser(url, profile: config.service("mail")?.profile ?? "google") }
     }
 
     func openMessage(_ summary: MailSummary) {
@@ -113,6 +119,7 @@ extension Session {
         window.minSize = NSSize(width: 480, height: 320)
         desktop.add(window, size: NSSize(width: min(desktop.bounds.width * 0.7, 900), height: min(desktop.bounds.height * 0.85, 760)))
         let isSent = summary.folder != "INBOX"
+        if mail.accounts.count > 1, !summary.account.isEmpty { window.title = "\(summary.subject) (\(summary.account))" }
 
         view.onOpenLink = { [weak self] url in self?.openBrowser(url) }
         view.onAction = { [weak self, weak view, weak window] action in
@@ -126,9 +133,9 @@ extension Session {
                     guard let self else { return }
                     do {
                         if action == .delete {
-                            try await self.mail.delete(summary)
+                            try await self.mail.delete([summary])
                         } else {
-                            try await self.mail.setSeen(summary, false)
+                            try await self.mail.setSeen([summary], false)
                         }
                         if let window { self.desktop.close(window) }
                     } catch {
@@ -150,7 +157,8 @@ extension Session {
     }
 
     func openReply(_ mode: ReplyMode, to message: MailMessage) {
-        let me = mail.auth.email?.lowercased() ?? ""
+        let mine = Set(mail.emails.map { $0.lowercased() })
+        let from = MailCenter.replyAccount(account: message.summary.account, to: message.to, cc: message.cc, accounts: mail.emails)
         let sender = message.replyTo ?? message.from
         var to = "", cc = "", subject = message.subject, body = ""
 
@@ -163,7 +171,7 @@ extension Session {
                 let others = MailAddress.split(message.to) + MailAddress.split(message.cc)
                 cc = others.filter {
                     let e = MailAddress.email($0).lowercased()
-                    return e != me && e != senderEmail
+                    return !mine.contains(e) && e != senderEmail
                 }.joined(separator: ", ")
             }
             let quoted = message.plainText.components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
@@ -175,18 +183,20 @@ extension Session {
         }
 
         let references = mode == .forward ? nil : [message.references, message.messageID].compactMap { $0 }.joined(separator: " ")
-        openCompose(to: to, cc: cc, subject: subject, body: body,
+        openCompose(to: to, cc: cc, subject: subject, body: body, from: from,
                     inReplyTo: mode == .forward ? nil : message.messageID, references: references)
     }
 
-    func openCompose(to: String = "", cc: String = "", subject: String = "", body: String = "",
+    func openCompose(to: String = "", cc: String = "", subject: String = "", body: String = "", from: String? = nil,
                      inReplyTo: String? = nil, references: String? = nil, attachments: [MailAttachment] = []) {
         guard signedOn else { return }
-        guard mail.auth.isConnected, let from = mail.auth.email else {
+        let accounts = mail.accounts.filter(\.auth.isConnected).map(\.email)
+        guard let primary = accounts.first else {
             openMailbox()
             return
         }
-        let view = ComposeView(to: to, cc: cc, subject: subject, body: body)
+        let chosen = from.flatMap { f in accounts.first { $0.caseInsensitiveCompare(f) == .orderedSame } } ?? primary
+        let view = ComposeView(to: to, cc: cc, subject: subject, body: body, accounts: accounts, from: chosen)
         attachments.forEach(view.addAttachment)
         let window = MDIWindow(title: subject.isEmpty ? "Write Mail" : subject,
                                icon: Icons.symbol("square.and.pencil", colors: [.white]), content: view)
@@ -200,6 +210,7 @@ extension Session {
         }
         view.onSend = { [weak self, weak view, weak window] in
             guard let self, let view else { return }
+            let from = view.fromAccount
             let outgoing = view.makeOutgoing(from: from, inReplyTo: inReplyTo,
                                              references: references?.isEmpty == true ? nil : references)
             guard !outgoing.recipients.isEmpty else {
@@ -210,7 +221,7 @@ extension Session {
             view.setBusy(true)
             Task { [weak self] in
                 do {
-                    try await self?.mail.send(outgoing)
+                    try await self?.mail.send(outgoing, from: from)
                     SoundManager.shared.play(.mailSent)
                     if let window { self?.desktop.close(window) }
                 } catch {
@@ -224,11 +235,11 @@ extension Session {
     /// Recent correspondents stand in for the AOL Address Book.
     private func showAddressBook(for view: ComposeView, from anchor: NSView) {
         var seen = Set<String>()
-        let me = mail.auth.email?.lowercased()
+        let mine = Set(mail.emails.map { $0.lowercased() })
         var people: [String] = []
         for address in mail.inbox.map(\.from) + mail.sent.flatMap({ MailAddress.split($0.to) }) {
             let email = MailAddress.email(address).lowercased()
-            guard !email.isEmpty, email != me, seen.insert(email).inserted else { continue }
+            guard !email.isEmpty, !mine.contains(email), seen.insert(email).inserted else { continue }
             people.append(address)
             if people.count == 30 { break }
         }
@@ -246,8 +257,9 @@ extension Session {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height), in: anchor)
     }
 
-    func connectGmail() {
-        guard mail.auth.hasClient else {
+    /// Adds a Gmail account, or signs one in again when `hint` names it. Google shows its account chooser either way.
+    func connectGmail(hint: String? = nil) {
+        guard mail.hasClient else {
             openSettings()
             let alert = NSAlert()
             alert.messageText = "Gmail needs a Google OAuth client"
@@ -259,9 +271,10 @@ extension Session {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let email = try await self.mail.auth.connect()
+                let email = try await GoogleAccounts.signIn(hint: hint)
                 self.shell.statusBar.status = "Gmail connected as \(email)"
-                self.mail.stop()
+                self.mail.reloadAccounts()
+                self.mail.restart(email)
                 self.mail.start()
                 self.mailboxView?.reload()
                 self.settingsView?.refreshGmailStatus()
@@ -273,9 +286,23 @@ extension Session {
         }
     }
 
-    func disconnectGmail() {
-        mail.stop()
-        mail.auth.disconnect()
+    func removeGmail(_ email: String) {
+        let alert = NSAlert()
+        alert.messageText = "Remove \(email)?"
+        alert.informativeText = "AOL-OS signs out of this account and stops checking its mail. Your mail stays in Gmail."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        GoogleAccounts.remove(email)
+        mail.reloadAccounts()
+        mailboxView?.reload()
+        settingsView?.refreshGmailStatus()
+        updateWelcomeMail()
+    }
+
+    func makePrimaryGmail(_ email: String) {
+        GoogleAccounts.makePrimary(email)
+        mail.reloadAccounts()
         mailboxView?.reload()
         settingsView?.refreshGmailStatus()
         updateWelcomeMail()

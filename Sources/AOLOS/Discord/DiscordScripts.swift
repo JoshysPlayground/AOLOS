@@ -97,6 +97,7 @@ extension Scripts {
         selectedChannels: () => store('SelectedChannelStore'),
         voiceActions: () => find((e) => typeof e.selectVoiceChannel === 'function'),
         guildMembers: () => store('GuildMemberStore'),
+        guildRoles: () => store('GuildRoleStore'),
       };
       const required = ['presence', 'relationships', 'users', 'dispatcher'];
       const missing = (keys) => keys.filter((k) => !S[k]);
@@ -120,11 +121,16 @@ extension Scripts {
         return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
       };
 
-      const displayName = (id) => {
+      // The server nickname, then the friend nickname, then the display name. Empty when Discord has not loaded the user.
+      const knownName = (id, guildId) => {
+        if (guildId) {
+          try { const m = need('guildMembers').getMember(guildId, id); if (m && m.nick) return String(m.nick); } catch (e) {}
+        }
         const u = S.users.getUser(id);
         const nick = typeof S.relationships.getNickname === 'function' ? S.relationships.getNickname(id) : null;
-        return nick || (u && (u.globalName || u.global_name || u.username)) || id;
+        return nick || (u && (u.globalName || u.global_name || u.username)) || '';
       };
+      const displayName = (id) => knownName(id) || id;
 
       const activity = (id) => {
         let list = [];
@@ -229,10 +235,56 @@ extension Scripts {
         pending = setTimeout(() => { pending = null; try { snapshot(false); } catch (e) {} }, 300);
       };
 
-      const text = (m) => {
+      const guildOf = (m, channelID) => {
+        if (m.guild_id || m.guildId) return String(m.guild_id || m.guildId);
+        try { const c = S.channels.getChannel(channelID); return c && c.guild_id ? String(c.guild_id) : ''; } catch (e) { return ''; }
+      };
+
+      const roleName = (guildId, id) => {
+        try {
+          const r = need('guildRoles').getRole(guildId, id);
+          if (r && r.name) return String(r.name);
+        } catch (e) {}
+        try {
+          const g = need('guilds').getGuild(guildId);
+          const r = g && g.roles && g.roles[id];
+          if (r && r.name) return String(r.name);
+        } catch (e) {}
+        return 'role';
+      };
+
+      // Webhooks and bots often post only rich embeds, so their text is the embed's author, title, description and fields.
+      const embedText = (m) => (m.embeds || [])
+        .filter((e) => e && e.type !== 'image' && e.type !== 'gifv')
+        .map((e) => {
+          const author = e.author && e.author.name;
+          const footer = e.footer && e.footer.text;
+          const lines = [author, e.title || e.rawTitle, e.description || e.rawDescription];
+          for (const f of e.fields || []) {
+            const name = f.name || f.rawName, value = f.value || f.rawValue;
+            lines.push(name && value ? `${name}: ${value}` : (name || value));
+          }
+          lines.push(footer);
+          return lines.filter(Boolean).map(String).join('\n');
+        })
+        .filter(Boolean)
+        .join('\n\n');
+
+      const text = (m, guildId) => {
+        const mentioned = {};
+        for (const u of m.mentions || []) {
+          if (u && typeof u === 'object' && u.id) mentioned[String(u.id)] = u.global_name || u.globalName || u.username;
+        }
         let s = String(m.content || '');
-        s = s.replace(/<@!?(\d+)>/g, (_, id) => '@' + displayName(id));
+        s = s.replace(/<@!?(\d+)>/g, (_, id) => '@' + (knownName(id, guildId) || mentioned[id] || 'unknown-user'));
+        s = s.replace(/<@&(\d+)>/g, (_, id) => '@' + roleName(guildId, id));
+        s = s.replace(/<#(\d+)>/g, (_, id) => {
+          try { const c = S.channels.getChannel(id); if (c && c.name) return '#' + c.name; } catch (e) {}
+          return '#channel';
+        });
         s = s.replace(/<a?(:\w+:)\d+>/g, '$1');
+        const embeds = embedText(m);
+        if (embeds) s = s ? `${s}\n${embeds}` : embeds;
         if (!s && (m.sticker_items || m.stickerItems || []).length) s = '[sticker]';
         return s;
       };
@@ -267,19 +319,24 @@ extension Scripts {
         const author = m.author || {};
         const authorID = String(author.id || '');
         const channelID = String(m.channel_id || m.channelId || '');
-        return { id: String(m.id), channelID, authorID, authorName: authorName(author), text: text(m), time, images, files,
-                 reply: reply(m, channelID), reactions: (m.reactions || []).map(reaction) };
+        const guildId = guildOf(m, channelID);
+        return { id: String(m.id), channelID, authorID, authorName: authorName(m, guildId), text: text(m, guildId), time, images, files,
+                 reply: reply(m, channelID, guildId), reactions: (m.reactions || []).map(reaction) };
       };
 
-      const authorName = (author) => {
+      // A webhook names itself on each message, so its name is never looked up.
+      const authorName = (m, guildId) => {
+        const author = m.author || {};
         const id = String(author.id || '');
-        let name = author.global_name || author.globalName || author.username || '';
-        try { if (id) name = displayName(id) || name; } catch (e) {}
-        return name;
+        const own = String(author.global_name || author.globalName || author.username || '');
+        if (m.webhook_id || m.webhookId || !id) return own;
+        let name = '';
+        try { name = knownName(id, guildId); } catch (e) {}
+        return name || own || id;
       };
 
       // The quoted message a reply points at. Gateway events embed it and stored messages reference it by ID.
-      const reply = (m, channelID) => {
+      const reply = (m, channelID, guildId) => {
         const ref = m.message_reference || m.messageReference;
         const refID = ref && (ref.message_id || ref.messageId);
         let original = m.referenced_message || m.referencedMessage || null;
@@ -287,7 +344,7 @@ extension Scripts {
           try { original = need('messages').getMessage(channelID, refID); } catch (e) {}
         }
         if (original) {
-          return { id: String(original.id), authorName: authorName(original.author || {}), text: text(original).slice(0, 140) };
+          return { id: String(original.id), authorName: authorName(original, guildId), text: text(original, guildId).slice(0, 140) };
         }
         return refID ? { id: String(refID), authorName: '', text: 'Original message not loaded' } : null;
       };
@@ -346,14 +403,15 @@ extension Scripts {
             return;
           }
           if (channel && channel.guild_id && mentionsMe(a.message, channel)) {
-            let serverName = '';
-            try { const g = optional('guilds'); serverName = String((g && g.getGuild(channel.guild_id) || {}).name || ''); } catch (e) {}
-            post({ type: 'discord.mention', channelId: String(a.channelId), guildId: String(channel.guild_id),
-                   roomName: String(channel.name || ''), serverName, message: message(a.message) });
+            post(Object.assign(roomInfo(channel), { type: 'discord.mention', message: message(a.message) }));
             return;
           }
           if (watched.has(String(a.channelId))) {
             post({ type: 'discord.roomMessage', channelId: String(a.channelId), message: message(a.message) });
+            return;
+          }
+          if (channel && channel.guild_id) {
+            post(Object.assign(roomInfo(channel), { type: 'discord.roomActivity', message: message(a.message) }));
             return;
           }
           const userId = recipient(channel);
@@ -380,6 +438,19 @@ extension Scripts {
           .forEach((t) => S.dispatcher.subscribe(t, reactions));
         S.dispatcher.subscribe('CONNECTION_OPEN', () => setTimeout(() => snapshot(true), 1500));
         S.dispatcher.subscribe('LOGOUT', () => { last = ''; post({ type: 'discord.signedOff' }); });
+      };
+
+      // The server and room a server channel message belongs to.
+      const roomInfo = (channel) => {
+        let serverName = '';
+        try { const g = optional('guilds'); serverName = String((g && g.getGuild(channel.guild_id) || {}).name || ''); } catch (e) {}
+        let categoryName = '';
+        try {
+          const parent = channel.parent_id && S.channels.getChannel(channel.parent_id);
+          categoryName = parent ? String(parent.name || '') : '';
+        } catch (e) {}
+        return { channelId: String(channel.id), guildId: String(channel.guild_id), roomName: String(channel.name || ''),
+                 serverName, categoryId: channel.parent_id ? String(channel.parent_id) : '', categoryName };
       };
 
       // A server message that names you directly or one of your roles. @everyone and @here are left out.
@@ -463,7 +534,8 @@ extension Scripts {
             } catch (e) {}
             let unread = false;
             try { unread = !!(rs && typeof rs.hasUnread === 'function' && rs.hasUnread(c.id)); } catch (e) {}
-            return { id: String(c.id), name: String(c.name || c.id), category, unread: !voice && unread, voice,
+            return { id: String(c.id), name: String(c.name || c.id), category,
+                     categoryId: c.parent_id ? String(c.parent_id) : '', unread: !voice && unread, voice,
                      people: voice ? people(c.id) : [], joined: voice && String(joined) === String(c.id) };
           });
       };
@@ -472,6 +544,38 @@ extension Scripts {
         snapshot: () => snapshot(true),
         servers: () => servers(),
         rooms: (guildId) => rooms(String(guildId)),
+        // Every room in every server, for Quick Launch.
+        allRooms: () => {
+          const out = [];
+          for (const s of servers()) {
+            let list = [];
+            try { list = rooms(s.id); } catch (e) {}
+            for (const r of list) out.push({ id: r.id, name: r.name, voice: r.voice, serverName: s.name });
+          }
+          return out;
+        },
+        // People the client knows (friends, DM partners, server members it has loaded) whose name matches,
+        // so Quick Launch can start an IM with someone who is not on the Buddy List.
+        searchUsers: (query, limit) => {
+          const q = String(query || '').toLowerCase();
+          if (!q) return [];
+          const me = S.users.getCurrentUser();
+          let all = [];
+          try {
+            const users = typeof S.users.getUsers === 'function' ? S.users.getUsers() : {};
+            all = Array.isArray(users) ? users : Object.values(users || {});
+          } catch (e) { return []; }
+          const out = [];
+          for (const u of all) {
+            if (!u || u.bot || u.system || (me && String(u.id) === String(me.id))) continue;
+            const id = String(u.id);
+            const names = [displayName(id), u.username, u.globalName || u.global_name].filter(Boolean);
+            if (!names.some((n) => String(n).toLowerCase().includes(q))) continue;
+            out.push(friend(id));
+            if (out.length >= limit) break;
+          }
+          return out;
+        },
         watch: (channelId) => { watched.add(String(channelId)); return true; },
         unwatch: (channelId) => { watched.delete(String(channelId)); return true; },
         history: async (userId, limit) => {
